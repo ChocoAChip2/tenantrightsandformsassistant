@@ -7,6 +7,7 @@ Supabase service, and registers the routes defined in routes.py.
 from flask import Flask
 
 from ai_service import AIService
+from alerting import configure_alerting
 from config import load_settings
 from routes import main_bp
 from supabase_service import SupabaseService
@@ -43,6 +44,14 @@ def create_app() -> Flask:
         print(f"❌ {ai_service.initialization_error}", flush=True)
     else:
         print("✅ Gemini client ready.", flush=True)
+
+    # Wire logger.exception(...) calls (routes.py has several) to a webhook
+    # so a failed chat turn reaches a human instead of only appearing in logs
+    # no one is watching.
+    if configure_alerting(settings.alert_webhook_url):
+        print("✅ Error alerting is configured.", flush=True)
+    else:
+        print("⚠️  ALERT_WEBHOOK_URL is not set -- errors will only appear in logs.", flush=True)
 
     # Register the blueprint from routes.py so Flask knows about each page URL.
     app.register_blueprint(main_bp)
