@@ -5,21 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NYC Tenant Assistant | Chat</title>
   <style>
+    /* Same tokens as login.html/signup.html -- one warm, light palette with
+       a single accent color reused everywhere, instead of the previous
+       dark, ChatGPT-styled multi-gray theme. Keep these three files' :root
+       blocks in sync if the palette ever changes. */
     :root {
-      color-scheme: dark;
-      --bg: #202123;
-      --panel: #343541;
-      --panel-alt: #444654;
-      --border: #4b4d5d;
-      --text: #ececf1;
-      --muted: #acacbe;
-      --accent: #10a37f;
+      color-scheme: light;
+      --bg: #f7f5f1;
+      --surface: #ffffff;
+      --border: #e5e0d6;
+      --text: #2c2a26;
+      --muted: #746e63;
+      --accent: #c2683f;
+      --accent-hover: #ab5734;
+      --accent-tint: #f5e6dc;
+      --warning: #8a5a1f;
+      --warning-tint: #f7ecd9;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       height: 100vh;
-      font-family: Inter, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
       display: flex;
@@ -29,26 +36,30 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 16px 20px;
+      padding: 14px 20px;
       border-bottom: 1px solid var(--border);
-      background: #2b2c32;
+      background: var(--surface);
     }
-    .meta { color: var(--muted); font-size: 14px; }
+    header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+    .meta { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+    header a { color: var(--muted); font-size: 13px; text-decoration: none; }
+    header a:hover { color: var(--accent); }
+
     .layout {
       flex: 1;
       display: flex;
       min-height: 0;
     }
     .sidebar {
-      width: 260px;
+      width: 250px;
       flex-shrink: 0;
       border-right: 1px solid var(--border);
-      background: #202123;
+      background: var(--surface);
       padding: 16px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 16px;
     }
     .new-chat-form {
       display: flex;
@@ -59,9 +70,15 @@
       padding: 8px 10px;
       border-radius: 8px;
       border: 1px solid var(--border);
-      background: #40414f;
+      background: var(--bg);
       color: var(--text);
       font: inherit;
+      font-size: 13px;
+    }
+    .new-chat-form input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-tint);
     }
     .new-chat-form button {
       border: 0;
@@ -69,13 +86,15 @@
       background: var(--accent);
       color: #fff;
       font-weight: 600;
+      font-size: 13px;
       cursor: pointer;
       padding: 8px 10px;
     }
+    .new-chat-form button:hover { background: var(--accent-hover); }
     .conversation-list {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 2px;
     }
     .conversation-link {
       display: block;
@@ -83,14 +102,15 @@
       border-radius: 8px;
       color: var(--text);
       text-decoration: none;
-      font-size: 14px;
+      font-size: 13px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .conversation-link:hover { background: var(--panel-alt); }
-    .conversation-link.active { background: var(--panel); border: 1px solid var(--border); }
-    .empty-hint { color: var(--muted); font-size: 13px; }
+    .conversation-link:hover { background: var(--bg); }
+    .conversation-link.active { background: var(--accent-tint); color: var(--accent-hover); font-weight: 600; }
+    .empty-hint { color: var(--muted); font-size: 13px; margin: 0; }
+
     .chat-area {
       flex: 1;
       display: flex;
@@ -100,73 +120,106 @@
     main {
       flex: 1;
       overflow-y: auto;
-      padding: 20px;
     }
     main.empty-state {
       display: flex;
       align-items: center;
       justify-content: center;
       color: var(--muted);
+      font-size: 14px;
     }
+
+    /* No boxed "chat panel" -- messages flow directly on the page
+       background, the way a normal chat client reads, rather than living
+       inside a bordered card. */
     #chat-box {
-      width: min(900px, 100%);
+      width: min(720px, 100%);
       margin: 0 auto;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: #2d2f39;
-      min-height: calc(100% - 4px);
-      padding: 14px;
+      padding: 24px 20px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
     }
-    .message {
-      border-radius: 10px;
-      padding: 12px 14px;
-      line-height: 1.45;
-      margin-bottom: 10px;
+    .message { display: flex; flex-direction: column; gap: 4px; }
+    .message .label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    /* Assistant turns are plain text on the page background -- no box, no
+       border -- which is most of what makes this read as a normal chat
+       client instead of a UI kit demo. */
+    .message.assistant .bubble {
+      color: var(--text);
+      line-height: 1.6;
       white-space: pre-wrap;
     }
-    .message.user { background: var(--panel-alt); }
-    .message.assistant { background: var(--panel); border: 1px solid var(--border); }
-    .label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; }
+    /* User turns get a single light, single-color tint so the two roles
+       stay easy to tell apart at a glance without adding more colors. */
+    .message.user { align-items: flex-end; }
+    .message.user .label { padding-right: 2px; }
+    .message.user .bubble {
+      background: var(--accent-tint);
+      color: var(--text);
+      border-radius: 14px;
+      padding: 10px 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      max-width: 80%;
+    }
+
     form#chat-form {
-      width: min(900px, 100%);
+      width: min(720px, 100%);
       margin: 0 auto;
-      padding: 14px 20px 20px;
+      padding: 12px 20px 20px;
       display: flex;
       gap: 10px;
+      align-items: flex-end;
     }
     textarea {
       flex: 1;
       resize: vertical;
-      min-height: 54px;
+      min-height: 48px;
       max-height: 180px;
-      padding: 12px;
-      border-radius: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
       border: 1px solid var(--border);
-      background: #40414f;
+      background: var(--surface);
       color: var(--text);
       font: inherit;
+      font-size: 14px;
+    }
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-tint);
     }
     button {
-      min-width: 90px;
+      min-width: 76px;
+      height: 44px;
       border: 0;
-      border-radius: 10px;
+      border-radius: 12px;
       background: var(--accent);
       color: #fff;
       font-weight: 600;
+      font-size: 14px;
       cursor: pointer;
       padding: 0 16px;
+      font-family: inherit;
     }
-    button:disabled { opacity: .65; cursor: not-allowed; }
+    button:hover { background: var(--accent-hover); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+
     .warning {
-      margin: 0 auto;
-      width: min(900px, calc(100% - 40px));
-      background: #5f3b14;
-      color: #ffdfb2;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid #775126;
+      margin: 12px auto 0;
+      width: min(720px, calc(100% - 40px));
+      background: var(--warning-tint);
+      color: var(--warning);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 13px;
     }
-    a { color: #9cdcff; }
+    a { color: var(--accent); }
     .sr-only {
       position: absolute;
       width: 1px;
@@ -177,12 +230,47 @@
       clip: rect(0, 0, 0, 0);
       border: 0;
     }
+
+    /* Below 700px the sidebar becomes a short horizontal strip instead of a
+       column, so the chat itself keeps most of the screen on a phone. */
+    @media (max-width: 700px) {
+      .layout { flex-direction: column; }
+      .sidebar {
+        width: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+        padding: 12px 14px;
+        gap: 10px;
+        overflow-y: visible;
+      }
+      .new-chat-form { flex-direction: row; }
+      .new-chat-form input { flex: 1; min-width: 0; }
+      .new-chat-form button { flex-shrink: 0; }
+      .conversation-list {
+        flex-direction: row;
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+      .conversation-link {
+        flex: 0 0 auto;
+        max-width: 60vw;
+        padding: 7px 12px;
+        font-size: 13px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+      }
+      .conversation-link.active { border-color: var(--accent); }
+      .chat-area { min-height: 0; }
+      #chat-box { padding: 14px 14px 8px; }
+      form#chat-form { padding: 10px 14px 14px; }
+    }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1 style="margin:0;font-size:20px;">NYC Tenant Assistant</h1>
+      <h1>NYC Tenant Assistant</h1>
       <p class="meta">Logged in as <strong>{{ user_email }}</strong></p>
     </div>
     <a href="{{ url_for('main.logout') }}">Log out</a>
@@ -218,7 +306,7 @@
             {% for message in messages %}
               <div class="message {{ message.role }}">
                 <span class="label">{{ "You" if message.role == "user" else "Assistant" }}</span>
-                <div>{{ message.content }}</div>
+                <div class="bubble">{{ message.content }}</div>
               </div>
             {% endfor %}
           </div>
@@ -259,6 +347,7 @@
         label.textContent = role === "user" ? "You" : "Assistant";
 
         const body = document.createElement("div");
+        body.className = "bubble";
         body.textContent = content;
 
         wrapper.appendChild(label);
