@@ -1,3 +1,7 @@
+import json
+from flask import send_file
+from form_service import FormService
+
 """HTTP routes for signup, login, chat, and logout pages.
 
 app.py registers this blueprint, and each route uses the shared SupabaseService
