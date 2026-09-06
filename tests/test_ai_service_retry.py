@@ -26,6 +26,13 @@ def _client_error(code=404, status="NOT_FOUND", message="model not found"):
     return ClientError(code, {"error": {"message": message, "status": status}})
 
 
+def _rate_limit_error():
+    return ClientError(
+        429,
+        {"error": {"message": "Quota exceeded for quota metric 'Generate Content API requests per minute'.", "status": "RESOURCE_EXHAUSTED"}},
+    )
+
+
 def _fake_response(text):
     return mock.MagicMock(text=text)
 
@@ -111,6 +118,43 @@ class ModelNotFoundStillSkipsToNextModelTests(unittest.TestCase):
             service.generate_reply([{"role": "user", "content": "What are my rights?"}])
 
         self.assertEqual(client.models.generate_content.call_count, 1)
+
+
+class RateLimitedRequestsFallBackToNextModelTests(unittest.TestCase):
+    """A 429/RESOURCE_EXHAUSTED means this model's quota is used up for the
+    current window -- the other real cause (besides a 503) behind "Sorry, I
+    couldn't get a response right now" showing up after a handful of
+    messages, once the free tier's per-minute quota for one model runs out.
+    """
+
+    @mock.patch("ai_service.time.sleep")
+    def test_429_moves_to_next_model_without_retrying_the_same_one(self, mock_sleep):
+        client = mock.MagicMock()
+        client.models.generate_content.side_effect = [
+            _rate_limit_error(),  # first model's quota is exhausted
+            _fake_response("Answer from the model with quota left."),
+        ]
+        service = AIService(client=client)
+
+        reply = service.generate_reply([{"role": "user", "content": "What are my rights?"}])
+
+        self.assertEqual(reply, "Answer from the model with quota left.")
+        models_tried = [call.kwargs["model"] for call in client.models.generate_content.call_args_list]
+        self.assertEqual(models_tried, [FALLBACK_MODELS[0], FALLBACK_MODELS[1]])
+        # No point retrying an exhausted quota within the same request -- it
+        # won't have reset yet, so this should move on immediately, not sleep.
+        mock_sleep.assert_not_called()
+
+    def test_rate_limit_on_every_model_raises_runtime_error(self):
+        client = mock.MagicMock()
+        client.models.generate_content.side_effect = [_rate_limit_error() for _ in FALLBACK_MODELS]
+        service = AIService(client=client)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            service.generate_reply([{"role": "user", "content": "What are my rights?"}])
+
+        self.assertIn("temporarily unavailable", str(ctx.exception))
+        self.assertEqual(client.models.generate_content.call_count, len(FALLBACK_MODELS))
 
 
 if __name__ == "__main__":

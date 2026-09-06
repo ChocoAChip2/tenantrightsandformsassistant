@@ -1,0 +1,105 @@
+Deployment Summary — Clearer archive/delete labels, a thinking indicator, and a second cause of "Sorry, I couldn't get a response right now"
+Date: 2026-09-06
+
+Requirement (from conversation, not BRANCH-PLAN.md):
+1. Archive/Delete/Restore in the sidebar used icon glyphs (a file-box emoji,
+   a trash-can emoji, a return arrow) that weren't obviously self-explanatory
+   at a glance -- asked for clearly labeled buttons instead.
+2. Sending a message had no feedback between hitting Send and the reply
+   appearing -- asked for a loading/typing indicator like Claude/ChatGPT/
+   Gemini show while a response is being generated.
+3. Reported that the AI "couldn't get a response" again, this time after a
+   few messages into a conversation rather than on the very first message
+   (the first occurrence, fixed 2026-09-06 in
+   2026-09-06-retry-on-server-error.txt, was a 503 ServerError not being
+   retried at all). Asked to look into this second occurrence.
+
+Changes shipped (branch fix/chat/ui-clarity-and-rate-limit, off main after
+PRs #12-#16 merged):
+
+1. templates/chat.html -- archive/delete/restore buttons:
+   - Replaced the emoji glyphs (&#128451; archive, &#128465; delete,
+     &#8617; restore) with plain text labels: "Archive", "Delete",
+     "Restore". Uppercase, small, bold -- reads as a real button instead of
+     a symbol someone has to guess at.
+   - Delete additionally gets a red-tinted hover (var(--error)/
+     var(--error-tint)) so the destructive action is visually distinct from
+     the two reversible ones, without needing to read the word first.
+   - title/aria-label text was already descriptive ("Archive conversation",
+     etc.) and is unchanged -- only the visible button content changed.
+
+2. templates/chat.html -- "thinking" indicator:
+   - New renderThinking() JS function appends an assistant-styled message
+     bubble containing three small dots (.thinking-dots) that pulse in
+     sequence via a CSS keyframe animation, the same visual pattern Claude/
+     ChatGPT/Gemini use for "working on it."
+   - The chat-form submit handler now calls renderThinking() immediately
+     after rendering the user's own message (before the fetch call), and
+     removes that element (thinkingEl.remove()) as soon as a reply, a PDF
+     download, or an error comes back -- in all three outcomes, not just
+     the success path -- so it never gets stuck on screen.
+   - Pure client-side/CSS change; no new network calls, no change to what
+     routes.py or ai_service.py return.
+
+3. ai_service.py -- handle 429 (RESOURCE_EXHAUSTED) as its own case:
+   Root cause found: AIService.generate_reply's ClientError handler only
+   special-cased a 404 ("model not found" -- skip to the next model). Every
+   other ClientError, including a 429 rate-limit/quota response, was
+   re-raised immediately with zero retry and zero fallback, propagating
+   straight out to routes.py's generic `except Exception` handler and
+   surfacing as the same "Sorry, I couldn't get a response right now."
+   Gemini's free tier enforces a per-minute request/token quota per model,
+   and this app resends the *entire* conversation history on every turn --
+   so token usage per call grows with the conversation, and the quota for
+   whichever model is currently in use gets used up faster than it looks
+   from message count alone. That's "after a few messages": not a
+   coincidence, but the quota for FALLBACK_MODELS[0] running out mid-
+   conversation.
+
+   Fix: added _is_rate_limited_error(), checking for HTTP 429 / a
+   RESOURCE_EXHAUSTED or TOO_MANY_REQUESTS status / "quota" in the error
+   text (Gemini's own error shapes are inconsistent about which of these
+   is populated, mirroring how _is_model_not_found_error already has to
+   check three different representations for a 404). On a rate-limited
+   ClientError, generate_reply now breaks out to the next fallback model
+   immediately -- no retry on the same model first, unlike the ServerError
+   (503) case, since a per-minute quota window won't reset within the same
+   web request and retrying would just waste time for no chance of
+   success. The next model in FALLBACK_MODELS carries its own separate
+   quota bucket, so this gives a real chance of success instead of an
+   immediate failure. If every model in FALLBACK_MODELS is rate-limited,
+   the existing RuntimeError("Gemini is temporarily unavailable after
+   retrying <models>.") still fires, unchanged.
+
+   tests/test_ai_service_retry.py: added RateLimitedRequestsFallBackToNext
+   ModelTests (2 tests) -- a 429 on the first model falls back to the
+   second and succeeds without calling time.sleep (asserting no wasted
+   retry-delay on an exhausted quota), and a 429 on every model still
+   raises the same RuntimeError as the all-503 case.
+
+Verified locally:
+- `python -m unittest discover -s tests` -- 68/68 pass (66 existing + 2 new).
+- HTML tag-balance check on the rendered chat.html output (a stray
+  unclosed <div> from the button-label edit would have been easy to miss
+  visually) -- no mismatches.
+- `python -m py_compile` on every tracked .py file -- clean.
+
+Deliberately not done:
+- Did not add a request-level timeout/abort on the fetch call in chat.html
+  -- the thinking indicator addresses the "is it stuck?" perception, but a
+  genuinely hung request still waits on the browser's own fetch timeout.
+  A separate, deliberate timeout would be a reasonable follow-up.
+- Did not surface *which* failure mode occurred (503 vs. 429 vs. genuinely
+  down) in the chat UI's error message -- it's still the same generic
+  "Sorry, I couldn't get a response right now." Distinguishing them for the
+  user (e.g. "high demand right now, try again in a minute" for a 429)
+  would need routes.py to pass through more detail than a bare 500/503,
+  which felt like a bigger UX change than this fix warranted.
+- Did not change FALLBACK_MODELS itself (e.g. adding a third model, or
+  reordering so a higher-quota model is tried first) -- that's a product
+  decision about cost/quality tradeoffs, not a bug fix.
+- Did not add caching or history truncation to reduce per-request token
+  usage as conversations grow, which is the underlying reason quota gets
+  used up "after a few messages" in the first place. Falling back to a
+  second model buys headroom but doesn't remove the growth; trimming or
+  summarizing older history would be a separate, larger change.
