@@ -4,11 +4,29 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NYC Tenant Assistant | Chat</title>
+  <script>
+    // Applied before first paint so switching pages (or a fresh load) never
+    // flashes the wrong theme. Reads the choice settings.html writes to
+    // localStorage; "system" (or no choice yet) falls through to the
+    // prefers-color-scheme media query below instead of setting an
+    // attribute at all.
+    (function () {
+      var saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    })();
+  </script>
   <style>
     /* Same tokens as login.html/signup.html -- one warm, light palette with
        a single accent color reused everywhere, instead of the previous
        dark, ChatGPT-styled multi-gray theme. Keep these three files' :root
-       blocks in sync if the palette ever changes. */
+       blocks in sync if the palette ever changes.
+
+       Dark mode is layered on top of the same tokens: an explicit choice
+       from settings.html sets data-theme on <html> (handled by the inline
+       script above, and it wins in both directions here); with no explicit
+       choice, prefers-color-scheme decides. */
     :root {
       color-scheme: light;
       --bg: #f7f5f1;
@@ -21,6 +39,34 @@
       --accent-tint: #f5e6dc;
       --warning: #8a5a1f;
       --warning-tint: #f7ecd9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --bg: #1c1b19;
+        --surface: #26241f;
+        --border: #3a372f;
+        --text: #ece7de;
+        --muted: #9b9488;
+        --accent: #e08a5f;
+        --accent-hover: #eba178;
+        --accent-tint: #3a2a20;
+        --warning: #e8c27a;
+        --warning-tint: #3a2f18;
+      }
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #1c1b19;
+      --surface: #26241f;
+      --border: #3a372f;
+      --text: #ece7de;
+      --muted: #9b9488;
+      --accent: #e08a5f;
+      --accent-hover: #eba178;
+      --accent-tint: #3a2a20;
+      --warning: #e8c27a;
+      --warning-tint: #3a2f18;
     }
     * { box-sizing: border-box; }
     body {
@@ -44,6 +90,41 @@
     .meta { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
     header a { color: var(--muted); font-size: 13px; text-decoration: none; }
     header a:hover { color: var(--accent); }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .ref-links {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-right: 18px;
+      border-right: 1px solid var(--border);
+    }
+    .ref-links span.label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .ref-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--accent-tint);
+      color: var(--accent-hover);
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .ref-link:hover { background: var(--accent); color: #fff; }
+    @media (max-width: 700px) {
+      .ref-links span.label { display: none; }
+    }
 
     .layout {
       flex: 1;
@@ -234,6 +315,9 @@
     /* Below 700px the sidebar becomes a short horizontal strip instead of a
        column, so the chat itself keeps most of the screen on a phone. */
     @media (max-width: 700px) {
+      header { flex-wrap: wrap; gap: 8px; }
+      .header-actions { flex-wrap: wrap; gap: 10px; }
+      .ref-links { padding-right: 0; border-right: 0; gap: 6px; }
       .layout { flex-direction: column; }
       .sidebar {
         width: auto;
@@ -273,7 +357,17 @@
       <h1>NYC Tenant Assistant</h1>
       <p class="meta">Logged in as <strong>{{ user_email }}</strong></p>
     </div>
-    <a href="{{ url_for('main.logout') }}">Log out</a>
+    <div class="header-actions">
+      <!-- Official reference sites, not app pages -- open in a new tab so a
+           tenant doesn't lose their conversation while looking something up. -->
+      <div class="ref-links">
+        <span class="label">Official sources</span>
+        <a class="ref-link" href="https://www.nyc.gov/site/hpd/index.page" target="_blank" rel="noopener noreferrer">NYC HPD</a>
+        <a class="ref-link" href="https://hcr.ny.gov/" target="_blank" rel="noopener noreferrer">NY State HCR</a>
+      </div>
+      <a href="{{ url_for('main.settings') }}">Settings</a>
+      <a href="{{ url_for('main.logout') }}">Log out</a>
+    </div>
   </header>
 
   {% if not ai_ready %}

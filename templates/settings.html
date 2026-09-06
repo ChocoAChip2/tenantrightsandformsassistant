@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NYC Tenant Assistant | Settings</title>
+  <script>
+    // Same no-flash pattern as chat.html: apply a saved explicit choice
+    // before first paint. "system" (or no choice yet) leaves no attribute
+    // set, so the prefers-color-scheme block below decides instead.
+    (function () {
+      var saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    })();
+  </script>
+  <style>
+    /* Same token values as chat.html/login.html/signup.html -- keep these
+       :root blocks in sync across all four files if the palette changes. */
+    :root {
+      color-scheme: light;
+      --bg: #f7f5f1;
+      --surface: #ffffff;
+      --border: #e5e0d6;
+      --text: #2c2a26;
+      --muted: #746e63;
+      --accent: #c2683f;
+      --accent-hover: #ab5734;
+      --accent-tint: #f5e6dc;
+      --warning: #8a5a1f;
+      --warning-tint: #f7ecd9;
+      --error: #a3312a;
+      --error-tint: #fbe9e7;
+      --success: #1b7f3b;
+      --success-tint: #e6f4ea;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --bg: #1c1b19;
+        --surface: #26241f;
+        --border: #3a372f;
+        --text: #ece7de;
+        --muted: #9b9488;
+        --accent: #e08a5f;
+        --accent-hover: #eba178;
+        --accent-tint: #3a2a20;
+        --warning: #e8c27a;
+        --warning-tint: #3a2f18;
+        --error: #e28a83;
+        --error-tint: #3a2320;
+        --success: #7fcf9b;
+        --success-tint: #1f3327;
+      }
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #1c1b19;
+      --surface: #26241f;
+      --border: #3a372f;
+      --text: #ece7de;
+      --muted: #9b9488;
+      --accent: #e08a5f;
+      --accent-hover: #eba178;
+      --accent-tint: #3a2a20;
+      --warning: #e8c27a;
+      --warning-tint: #3a2f18;
+      --error: #e28a83;
+      --error-tint: #3a2320;
+      --success: #7fcf9b;
+      --success-tint: #1f3327;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+    header a { color: var(--muted); font-size: 13px; text-decoration: none; }
+    header a:hover { color: var(--accent); }
+    main {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 28px 20px 60px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+    }
+    .card h2 { margin: 0 0 4px; font-size: 15px; }
+    .card p.hint { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+    .theme-options {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .theme-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      font-size: 13px;
+      flex: 1;
+      min-width: 120px;
+    }
+    .theme-option:has(input:checked) {
+      border-color: var(--accent);
+      background: var(--accent-tint);
+      color: var(--accent-hover);
+      font-weight: 600;
+    }
+    .theme-option input { accent-color: var(--accent); }
+    form.stack { display: grid; gap: 12px; }
+    label { font-size: 13px; color: var(--muted); display: grid; gap: 6px; }
+    input[type="email"], input[type="password"] {
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+    }
+    input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+    button, a.button {
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      padding: 10px 14px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: fit-content;
+    }
+    button:hover, a.button:hover { background: var(--accent-hover); }
+    a.button.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    a.button.secondary:hover { background: var(--bg); color: var(--accent); }
+    .notice {
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      margin: 0 0 16px;
+    }
+    .notice.error { background: var(--error-tint); color: var(--error); }
+    .notice.success { background: var(--success-tint); color: var(--success); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Settings</h1>
+    <a href="{{ url_for('main.chat') }}">&larr; Back to chat</a>
+  </header>
+
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="notice {{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <section class="card">
+      <h2>Appearance</h2>
+      <p class="hint">Choose how the app looks. This is saved on this device only.</p>
+      <div class="theme-options" id="theme-options">
+        <label class="theme-option">
+          <input type="radio" name="theme" value="light">
+          Light
+        </label>
+        <label class="theme-option">
+          <input type="radio" name="theme" value="dark">
+          Dark
+        </label>
+        <label class="theme-option">
+          <input type="radio" name="theme" value="system">
+          Match system
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Account</h2>
+      <p class="hint">Signed in as <strong>{{ user_email }}</strong>. Update your email and/or password below. Changing your email requires confirming it from your inbox before it takes effect.</p>
+      <form class="stack" method="POST" action="{{ url_for('main.update_account') }}">
+        <label>
+          New email
+          <input type="email" name="email" placeholder="Leave blank to keep your current email">
+        </label>
+        <label>
+          New password
+          <input type="password" name="password" minlength="6" placeholder="Leave blank to keep your current password">
+        </label>
+        <label>
+          Confirm new password
+          <input type="password" name="confirm_password" minlength="6">
+        </label>
+        <button type="submit">Save account changes</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Your data</h2>
+      <p class="hint">Download a copy of every message in every conversation you've had with the assistant, as a plain Markdown file, for your own records.</p>
+      <a class="button secondary" href="{{ url_for('main.download_chat_history') }}">Download my chat history</a>
+    </section>
+  </main>
+
+  <script>
+    // Wire the theme radios up to the same localStorage key the inline
+    // pre-paint scripts on this page and chat.html read from.
+    (function () {
+      var radios = document.querySelectorAll('#theme-options input[type="radio"]');
+      var current = localStorage.getItem("theme") || "system";
+
+      radios.forEach(function (radio) {
+        radio.checked = radio.value === current;
+        radio.addEventListener("change", function () {
+          if (radio.value === "system") {
+            localStorage.removeItem("theme");
+            document.documentElement.removeAttribute("data-theme");
+          } else {
+            localStorage.setItem("theme", radio.value);
+            document.documentElement.setAttribute("data-theme", radio.value);
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
