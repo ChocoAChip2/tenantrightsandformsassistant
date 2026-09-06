@@ -1,0 +1,119 @@
+Deployment Summary — Supabase Keep-Alive + Startup Safety
+Date: 2026-08-30
+
+Requirement: the Supabase project must not auto-pause, and a failed chat
+turn must reach a human instead of being discovered by opening the tab.
+Free tier pauses after 7 days of inactivity; this already happened once.
+
+Changes shipped (branch feat/ops/supabase-keepalive):
+
+- .github/workflows/keepalive.yml: new GitHub Actions workflow, cron
+  "0 12 */6 * *" (worked out by hand that */6 on day-of-month never
+  produces a gap over 6 days across any month length, leaving the intended
+  1-day margin before the 7-day pause threshold), plus workflow_dispatch
+  for manual runs. Issues an authenticated GET against
+  {SUPABASE_URL}/rest/v1/conversations?select=id&limit=1 using SUPABASE_URL
+  / SUPABASE_KEY repository secrets. Checked the official Supabase docs
+  (https://supabase.com/docs/guides/platform/free-project-pausing) before
+  building this: the pause check counts "user requests to the database",
+  not just API-gateway reachability, so the workflow queries a real table
+  instead of pinging the bare REST root (which only returns PostgREST's
+  generated OpenAPI schema). RLS blocks the anon key from returning any
+  rows since it carries no user JWT — expected, and means the query never
+  logs real user data. Verified against the live "Project Paradigm"
+  Supabase project via the Supabase MCP tools that it is currently
+  ACTIVE_HEALTHY (not paused) and that public.conversations exists with
+  RLS enabled, before writing the query. The workflow file documents, per
+  the task brief, that GitHub disables scheduled workflows after 60 days
+  of repo inactivity with no warning, and that a non-200 response should
+  be checked against the Supabase dashboard for a paused/restoring project
+  before assuming the workflow itself is broken.
+
+- alerting.py (new): a logging.Handler that POSTs ERROR-and-above log
+  records to a webhook URL (Slack/Discord-compatible {"text": ...} JSON
+  payload). Built on urllib.request only — no new dependency. Attached to
+  the root logger via configure_alerting(), so routes.py's existing
+  logger.exception(...) calls (chat failures, Supabase client build
+  failures, conversation-creation failures) now reach the webhook without
+  any change to routes.py or to chat/AI behavior. Failures inside the
+  handler itself are swallowed via self.handleError() per the
+  logging.Handler contract, so a dead webhook can never break the request
+  that logged the original error.
+
+- config.py: FLASK_SECRET_KEY no longer defaults to "change-me-in-render"
+  (a constant published in this public repo). load_settings() now raises
+  RuntimeError with a message that includes the exact command to generate
+  a real secret if the variable is unset or blank. Also added
+  alert_webhook_url to Settings, read from the new optional
+  ALERT_WEBHOOK_URL env var.
+
+- app.py: wires alerting.configure_alerting() in at app-creation time,
+  printing a status line in the same style as the existing Supabase/Gemini
+  readiness checks.
+
+- README.md: documented the workflow, the required GitHub repository
+  secrets (SUPABASE_URL / SUPABASE_KEY — a separate secret store from
+  Render's env vars, so they need to be added in both places), the new
+  ALERT_WEBHOOK_URL env var, and the FLASK_SECRET_KEY behavior change
+  (updated Local Run example to generate a real key instead of a
+  placeholder string).
+
+- tests/ (new directory — did not exist on main): test_config.py covers
+  FLASK_SECRET_KEY being required/blank-rejected and that
+  ALERT_WEBHOOK_URL is read correctly; test_alerting.py covers the webhook
+  handler's level filtering, payload shape, traceback inclusion for
+  logger.exception(...), and that a webhook failure is swallowed rather
+  than raised. All 11 tests use unittest + unittest.mock only, no new
+  dependency, and never contact a real network endpoint, Gemini, or
+  Supabase.
+
+Verified locally:
+- `python -m unittest discover -s tests` — 11/11 pass.
+- `python -c "import app"` with no env vars set raises the expected
+  RuntimeError naming FLASK_SECRET_KEY.
+- `python -c "import app"` with only FLASK_SECRET_KEY set starts cleanly
+  and prints the expected readiness/alerting status lines (Supabase and
+  Gemini both print "keys are missing" as before this branch — unchanged
+  behavior since neither key was set in that run).
+- `python -c "import app"` with FLASK_SECRET_KEY and ALERT_WEBHOOK_URL
+  both set prints "Error alerting is configured."
+- .github/workflows/keepalive.yml parses as valid YAML.
+- Confirmed via Supabase MCP tools that the live "Project Paradigm"
+  project (lwskfyxmcuowexehbqig) is ACTIVE_HEALTHY and that
+  public.conversations exists with RLS enabled, matching what the
+  workflow queries.
+
+Deliberately not done (out of scope per the task brief):
+- No dashboards, tracing, or full observability — alerting is a single
+  webhook POST on ERROR, nothing more.
+- No uptime SLA or external status page.
+- No change to chat or AI behavior — ai_service.py, routes.py's request
+  handling logic, supabase_service.py, and the templates are all
+  untouched; the only new call into routes.py's existing logger is via
+  logging's own propagation, not a code change to routes.py.
+- Did not attempt to fix the other items in the BRANCH-PLAN.md security
+  backlog (session-token storage, CSRF, rate limiting, etc.) even though
+  they were visible in the same files touched here — those are listed as
+  their own branches and are out of scope for this one.
+- Did not actually trigger the GitHub Actions workflow from this session
+  (no push to the repo's default branch / no live repository secrets
+  configured yet) — cannot confirm a green run on GitHub's own scheduler
+  from here. The workflow was verified for YAML validity and the query
+  logic was verified against the live Supabase project directly.
+- Did not add retry/backoff logic for a paused-and-restoring Supabase
+  project beyond curl's own --retry flags — recovery from an already-
+  paused project requires a human to resume it from the dashboard either
+  way (this workflow prevents pausing; it does not un-pause).
+
+Next steps for a human:
+1. Add SUPABASE_URL and SUPABASE_KEY as GitHub repository secrets
+   (Settings -> Secrets and variables -> Actions) — separate from Render's
+   env vars of the same name.
+2. Optionally add ALERT_WEBHOOK_URL to Render (a Slack or Discord incoming
+   webhook URL) to receive alerts. Without it, alerting silently stays
+   off, matching current behavior.
+3. Set FLASK_SECRET_KEY in Render if it is not already a real random
+   value — the app will otherwise refuse to start on the next deploy.
+4. After merging, manually trigger the workflow once from the Actions tab
+   (workflow_dispatch) to confirm the repository secrets are correct
+   before waiting 6 days for the first scheduled run.
