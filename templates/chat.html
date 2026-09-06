@@ -237,17 +237,28 @@
     .conversation-row:focus-within .conversation-actions {
       display: flex;
     }
+    /* Spelled-out labels instead of icon glyphs -- "Archive"/"Delete" read
+       unambiguously at a glance, where an emoji (a file box vs. a trash can)
+       made people second-guess which button did what. Delete additionally
+       gets a red-tinted hover so the destructive action stands out even
+       without reading the word. */
     .icon-btn {
       border: 0;
       background: transparent;
       color: var(--muted);
       cursor: pointer;
-      font-size: 13px;
+      font-size: 11px;
+      font-weight: 700;
       line-height: 1;
-      padding: 5px 6px;
+      padding: 6px 8px;
       border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      font-family: inherit;
     }
     .icon-btn:hover { background: var(--border); color: var(--text); }
+    .icon-btn.delete-btn:hover { background: var(--error-tint); color: var(--error); }
     .empty-hint { color: var(--muted); font-size: 13px; margin: 0; }
 
     .archived-section { font-size: 13px; color: var(--muted); }
@@ -409,6 +420,28 @@
       line-height: 1.5;
       white-space: pre-wrap;
       max-width: 80%;
+    }
+    /* "Assistant is thinking" indicator shown while waiting on a reply --
+       three dots pulsing in sequence, the same pattern Claude/ChatGPT/Gemini
+       all use, so it reads as "working on it" rather than a stalled page. */
+    .thinking-dots {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+      padding: 4px 0;
+    }
+    .thinking-dots .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+      animation: thinking-pulse 1.2s infinite ease-in-out both;
+    }
+    .thinking-dots .dot:nth-child(2) { animation-delay: 0.15s; }
+    .thinking-dots .dot:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes thinking-pulse {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+      40% { transform: translateY(-4px); opacity: 1; }
     }
 
     form#chat-form {
@@ -580,10 +613,10 @@
               >{{ conversation.title or "Untitled conversation" }}</a>
               <div class="conversation-actions">
                 <form method="POST" action="{{ url_for('main.archive_conversation', conversation_id=conversation.id) }}">
-                  <button type="submit" class="icon-btn" title="Archive conversation" aria-label="Archive conversation">&#128451;</button>
+                  <button type="submit" class="icon-btn" title="Archive conversation" aria-label="Archive conversation">Archive</button>
                 </form>
                 <form method="POST" action="{{ url_for('main.delete_conversation', conversation_id=conversation.id) }}" onsubmit="return confirm('Delete this conversation and all of its messages? This cannot be undone.');">
-                  <button type="submit" class="icon-btn" title="Delete conversation" aria-label="Delete conversation">&#128465;</button>
+                  <button type="submit" class="icon-btn delete-btn" title="Delete conversation" aria-label="Delete conversation">Delete</button>
                 </form>
               </div>
             </div>
@@ -604,10 +637,10 @@
                   >{{ conversation.title or "Untitled conversation" }}</a>
                   <div class="conversation-actions">
                     <form method="POST" action="{{ url_for('main.unarchive_conversation', conversation_id=conversation.id) }}">
-                      <button type="submit" class="icon-btn" title="Restore conversation" aria-label="Restore conversation">&#8617;</button>
+                      <button type="submit" class="icon-btn" title="Restore conversation" aria-label="Restore conversation">Restore</button>
                     </form>
                     <form method="POST" action="{{ url_for('main.delete_conversation', conversation_id=conversation.id) }}" onsubmit="return confirm('Delete this conversation and all of its messages? This cannot be undone.');">
-                      <button type="submit" class="icon-btn" title="Delete conversation" aria-label="Delete conversation">&#128465;</button>
+                      <button type="submit" class="icon-btn delete-btn" title="Delete conversation" aria-label="Delete conversation">Delete</button>
                     </form>
                   </div>
                 </div>
@@ -782,6 +815,38 @@
         wrapper.appendChild(body);
         chatBox.appendChild(wrapper);
         chatBox.scrollTop = chatBox.scrollHeight;
+        return wrapper;
+      }
+
+      // Shown the instant a message is sent and removed the instant a reply
+      // (or an error) comes back, so there's never a silent gap where it
+      // looks like the click didn't register.
+      function renderThinking() {
+        const wrapper = document.createElement("div");
+        wrapper.className = "message assistant";
+
+        const label = document.createElement("span");
+        label.className = "label";
+        label.textContent = "Assistant";
+
+        const body = document.createElement("div");
+        body.className = "bubble";
+        const dots = document.createElement("span");
+        dots.className = "thinking-dots";
+        dots.setAttribute("role", "status");
+        dots.setAttribute("aria-label", "Assistant is thinking");
+        for (let i = 0; i < 3; i++) {
+          const dot = document.createElement("span");
+          dot.className = "dot";
+          dots.appendChild(dot);
+        }
+        body.appendChild(dots);
+
+        wrapper.appendChild(label);
+        wrapper.appendChild(body);
+        chatBox.appendChild(wrapper);
+        chatBox.scrollTop = chatBox.scrollHeight;
+        return wrapper;
       }
 
       chatForm.addEventListener("submit", async (event) => {
@@ -793,6 +858,7 @@
         renderMessage("user", text);
         messageInput.value = "";
         sendBtn.disabled = true;
+        const thinkingEl = renderThinking();
 
         try {
           const response = await fetch("{{ url_for('main.chat_message') }}", {
@@ -806,21 +872,24 @@
           if (contentType && contentType.includes("application/pdf")) {
             const blob = await response.blob();
             const downloadUrl = window.URL.createObjectURL(blob);
-            
+
             const link = document.createElement('a');
             link.href = downloadUrl;
             link.download = "NYC_Tenant_Complaint.pdf";
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-            
+
+            thinkingEl.remove();
             renderMessage("assistant", "System: Your form is complete and downloading now!");
           } else {
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || "Request failed.");
+            thinkingEl.remove();
             renderMessage("assistant", payload.reply);
           }
         } catch (error) {
+          thinkingEl.remove();
           renderMessage("assistant", "Sorry, I couldn’t get a response right now. Please try again.");
         } finally {
           sendBtn.disabled = false;

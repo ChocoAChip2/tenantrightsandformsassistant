@@ -52,6 +52,29 @@ def _is_model_not_found_error(error: ClientError) -> bool:
     return "not found" in str(error).lower()
 
 
+def _is_rate_limited_error(error: ClientError) -> bool:
+    """A 429 (Gemini reports it as RESOURCE_EXHAUSTED) means this specific
+    model's quota is used up for the current window -- not that the request
+    itself is bad. This is the other real-world cause of "Sorry, I couldn't
+    get a response right now" surfacing after a handful of messages: the
+    free tier's per-minute request/token quota for one model gets used up
+    quickly once a conversation's history (resent in full on every turn)
+    grows, and a 429 was previously re-raised immediately with no retry or
+    fallback at all, identically to a genuinely bad request. Retrying the
+    same model within the same web request won't help -- the window won't
+    reset that fast -- but the next model in FALLBACK_MODELS has its own,
+    separate quota bucket, so move on to it right away instead.
+    """
+    code = getattr(error, "code", None)
+    if code == 429:
+        return True
+    status = getattr(error, "status", None)
+    if status is not None and str(status).upper() in {"RESOURCE_EXHAUSTED", "TOO_MANY_REQUESTS"}:
+        return True
+    message = str(error).lower()
+    return "resource_exhausted" in message or "quota" in message
+
+
 @dataclass
 class AIService:
     client: genai.Client | None
@@ -115,6 +138,9 @@ class AIService:
                     if _is_model_not_found_error(exc):
                         last_error = exc
                         break  # this model doesn't exist for this key -- retrying it won't help
+                    if _is_rate_limited_error(exc):
+                        last_error = exc
+                        break  # this model's quota is exhausted -- try the next model, don't hammer it
                     raise
                 except ServerError as exc:
                     # Transient (503 "overloaded", 500, etc.) -- worth a short
