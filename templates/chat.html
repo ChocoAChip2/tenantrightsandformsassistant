@@ -177,29 +177,16 @@
       clip: rect(0, 0, 0, 0);
       border: 0;
     }
-    /* The 260px sidebar is fixed-width, so on a narrow screen it takes its
-       full share and the conversation gets whatever is left. At 375px that
-       left the composer 26px wide and pushed the Send button off-screen.
-
-       Below 700px the two panes stack instead: the sidebar becomes a short
-       header strip whose conversation list scrolls sideways, costing one row
-       rather than a whole column. 700px is where the composer stops being
-       comfortable — the send button, gaps and padding claim ~140px, so the
-       textarea needs the viewport to clear roughly 600px before the sidebar
-       is affordable at all. */
     @media (max-width: 700px) {
       .layout { flex-direction: column; }
       .sidebar {
         width: auto;
-        /* The divider moves to the edge the chat area now sits on. */
         border-right: 0;
         border-bottom: 1px solid var(--border);
         padding: 12px 14px;
         gap: 10px;
-        /* Only the conversation strip inside scrolls now, not the sidebar. */
         overflow-y: visible;
       }
-      /* Name field and button fit on one row, saving a row of height. */
       .new-chat-form { flex-direction: row; }
       .new-chat-form input { flex: 1; min-width: 0; }
       .new-chat-form button { flex-shrink: 0; }
@@ -207,13 +194,9 @@
         flex-direction: row;
         gap: 8px;
         overflow-x: auto;
-        /* Room for the active chip's border and the focus ring, which a
-           tight scroll container would otherwise clip. */
         padding-bottom: 2px;
       }
       .conversation-link {
-        /* Chips keep their natural width and never squash; the existing
-           ellipsis truncation caps how far a long title can push. */
         flex: 0 0 auto;
         max-width: 60vw;
         padding: 7px 12px;
@@ -222,8 +205,6 @@
         background: var(--panel);
       }
       .conversation-link.active { border-color: var(--accent); }
-      /* Column flex needs this for main's overflow to scroll rather than
-         stretch the chat area past the viewport. */
       .chat-area { min-height: 0; }
       main { padding: 14px; }
       form#chat-form { padding: 10px 14px 14px; }
@@ -335,10 +316,25 @@
             body: JSON.stringify({ conversation_id: conversationId, content: text })
           });
 
-          const payload = await response.json();
-          if (!response.ok) throw new Error(payload.error || "Request failed.");
+          const contentType = response.headers.get("content-type");
 
-          renderMessage("assistant", payload.reply);
+          if (contentType && contentType.includes("application/pdf")) {
+            const blob = await response.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = "NYC_Tenant_Complaint.pdf";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            renderMessage("assistant", "System: Your form is complete and downloading now!");
+          } else {
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || "Request failed.");
+            renderMessage("assistant", payload.reply);
+          }
         } catch (error) {
           renderMessage("assistant", "Sorry, I couldn’t get a response right now. Please try again.");
         } finally {
