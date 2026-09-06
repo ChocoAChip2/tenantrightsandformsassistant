@@ -81,3 +81,18 @@ Deliberately not done:
 Next steps for a human: after merging, sign up with an email that already
 has a confirmed account on the live project once, to confirm which of the
 two code paths actually fires in this project's configuration.
+
+Follow-up (same day, same branch): palette harmonization with chat/settings
+
+- login.html/signup.html: updated the shared :root token values (--bg,
+  --surface, --border, --text, --muted, --accent, --accent-hover,
+  --accent-tint, --error, --error-tint, --success, --success-tint) from
+  the original warm terracotta/cream palette to the cooler, more formal
+  civic-blue palette introduced on feat/chat/minimalist-redesign (a
+  separate branch, forked from main independently, so this had to be
+  applied here too rather than inherited). Color values only -- no
+  markup, layout, or border-radius changes, and no dark-mode/theme-toggle
+  support added here (that's a chat-only feature on the other branch).
+  Keeps the app visually consistent across auth and chat/settings once
+  both branches merge; without this the login/signup pages would still
+  read as the old warm theme next to the new civic-blue chat pages.

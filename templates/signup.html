@@ -12,19 +12,26 @@
        of a gray dashboard look -- see log/ for the branch that introduced
        this. */
     :root {
+      /* Same formal, civic-blue palette as chat.html/settings.html (on the
+         feat/chat/minimalist-redesign branch) -- cool neutrals + a single
+         serious blue accent instead of warm terracotta, closer in register
+         to nyc.gov/ny.gov without copying their exact colors. Keep these
+         :root blocks in sync across all four files if the palette changes.
+         (Dark mode was not added here -- that's a separate, chat-only
+         feature on the other branch; this is a color harmonization only.) */
       color-scheme: light;
-      --bg: #f7f5f1;
+      --bg: #eef1f5;
       --surface: #ffffff;
-      --border: #e5e0d6;
-      --text: #2c2a26;
-      --muted: #746e63;
-      --accent: #c2683f;
-      --accent-hover: #ab5734;
-      --accent-tint: #f5e6dc;
-      --error: #b3392c;
-      --error-tint: #fbeae7;
-      --success: #3a6b4c;
-      --success-tint: #e9f2ec;
+      --border: #d7dde5;
+      --text: #1c2733;
+      --muted: #5b6b7c;
+      --accent: #1c5d8c;
+      --accent-hover: #164a70;
+      --accent-tint: #dce8f2;
+      --error: #a3312a;
+      --error-tint: #fbe9e7;
+      --success: #1b7f3b;
+      --success-tint: #e6f4ea;
     }
     * { box-sizing: border-box; }
     body {
