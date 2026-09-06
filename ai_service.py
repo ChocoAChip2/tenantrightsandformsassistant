@@ -1,8 +1,9 @@
 """Gemini client wrapper used by chat routes."""
 
+import time
 from dataclasses import dataclass
 from google import genai
-from google.genai.errors import ClientError
+from google.genai.errors import ClientError, ServerError
 
 from config import Settings
 
@@ -10,6 +11,16 @@ FALLBACK_MODELS = (
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
 )
+
+# Gemini returns a 503 (ServerError, not ClientError) fairly often under load,
+# especially on the free tier -- it's transient, not a sign the model/request
+# is bad. Before this, a single 503 skipped straight past the fallback-model
+# loop entirely (the `except ClientError` below never matches a ServerError)
+# and surfaced as "Sorry, I couldn't get a response right now" on the very
+# first hiccup. Retrying briefly, then trying the next fallback model, gives
+# a transient overload a real chance to clear before giving up.
+_SERVER_ERROR_RETRIES_PER_MODEL = 1
+_SERVER_ERROR_RETRY_DELAY_SECONDS = 1.5
 
 INTAKE_SYSTEM_PROMPT = (
     "You are an administrative intake clerk helping NYC tenants prepare housing complaint forms. "
@@ -92,20 +103,29 @@ class AIService:
 
         last_error = None
         for model_name in FALLBACK_MODELS:
-            try:
-                response = self.client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=config,
-                )
-                return (response.text or "").strip() or "I could not generate a response."
-            except ClientError as exc:
-                if _is_model_not_found_error(exc):
+            for attempt in range(_SERVER_ERROR_RETRIES_PER_MODEL + 1):
+                try:
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config,
+                    )
+                    return (response.text or "").strip() or "I could not generate a response."
+                except ClientError as exc:
+                    if _is_model_not_found_error(exc):
+                        last_error = exc
+                        break  # this model doesn't exist for this key -- retrying it won't help
+                    raise
+                except ServerError as exc:
+                    # Transient (503 "overloaded", 500, etc.) -- worth a short
+                    # retry on this same model before moving on.
                     last_error = exc
-                    continue
-                raise
+                    if attempt < _SERVER_ERROR_RETRIES_PER_MODEL:
+                        time.sleep(_SERVER_ERROR_RETRY_DELAY_SECONDS)
+                        continue
+                    break  # out of retries for this model; fall through to the next fallback model
 
         attempted_models = ", ".join(FALLBACK_MODELS)
         raise RuntimeError(
-            f"No supported Gemini model is available for this API key. Tried: {attempted_models}"
+            f"Gemini is temporarily unavailable after retrying {attempted_models}."
         ) from last_error
