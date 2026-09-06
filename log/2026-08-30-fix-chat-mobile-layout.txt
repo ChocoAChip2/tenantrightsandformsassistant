@@ -1,0 +1,89 @@
+Deployment Summary — Chat Mobile Layout Fix
+Date: 2026-08-30
+Branch: fix/chat/mobile-layout
+
+Made the chat page usable on a phone. The bug is pre-existing and predates
+the model-fallback and system-prompt work.
+
+The problem:
+.layout is a flex row and .sidebar was width:260px with flex-shrink:0, so on
+a narrow screen the sidebar kept its full width and the conversation got
+whatever was left. Measured on the rendered template at 375x812 before the
+fix:
+
+  sidebar        260px  (69% of the viewport)
+  chat area      115px
+  chat box        75px
+  message text    45px  (one or two words per line)
+  composer        26px  (a few characters wide)
+  Send button     right edge at x=406 — 31px off-screen
+  document scrollWidth 406 vs 375 viewport — the page scrolled sideways
+
+Changes shipped:
+- templates/chat.html: added one @media (max-width: 700px) block at the end
+  of the existing <style> element. Below 700px .layout switches to
+  flex-direction:column, so the sidebar becomes a short header strip above
+  the conversation instead of a column beside it. Within the strip the
+  new-chat input and button share one row, and .conversation-list becomes a
+  horizontally scrollable row of chips (flex:0 0 auto, max-width:60vw). The
+  chips reuse the existing ellipsis truncation, so a long title cannot push
+  the strip wider than the viewport. .chat-area gets min-height:0 so main's
+  overflow scrolls rather than stretching the page.
+
+Why 700px: the Send button, the flex gap and the form padding claim roughly
+140px of the composer row, so the viewport has to clear about 600px before a
+260px sidebar is affordable at all. 700px leaves margin above that.
+
+Why a stacked strip rather than a hamburger toggle: it is pure CSS. A toggle
+needs a button, JS state and an aria-expanded/focus story, and it hides the
+conversation list behind a tap. The strip keeps conversations visible and
+adds no JavaScript, which also means nothing in this branch collides with
+the chat JS that feat/ai/model-fallback-and-titles and feat/ai/system-prompt
+are both editing.
+
+Verified by rendering templates/chat.html through Flask (real Jinja context,
+not a hand-written mock) and measuring the live DOM in 375x812 and 1280x900
+iframes:
+
+- At 375x812 after the fix: sidebar strip 105px tall, chat area 375px wide,
+  chat box 347px, composer 247px, Send button right edge at 361px, document
+  scrollWidth 375 — no horizontal overflow.
+- Width sweep at 320/360/375/414/480/600/699/700/701/768/900/1024/1280/1440:
+  no horizontal overflow at any width. The layout flips exactly at the
+  700/701 boundary. Even at 320px the composer is 192px wide.
+- Desktop unchanged: measured left/top/width/height, flex-direction,
+  overflow-x, padding and font-size for 13 elements (header, layout,
+  sidebar, new-chat form, conversation list and link, chat area, main, chat
+  box, message, chat form, textarea, send button) against the pre-fix
+  template at 1280x900. All 13 identical, and page scrollWidth identical.
+- All four other template states checked at 375px, not just an active
+  conversation: empty state, no conversations at all, the GEMINI_API_KEY
+  warning banner, and a 120-character conversation title. None overflow; the
+  long title is capped at 225px (60vw) by the existing ellipsis rule.
+- Confirmed the chip strip actually scrolls: scrollWidth 1030 vs clientWidth
+  347, and the last chip is fully inside the viewport after scrolling to the
+  end.
+
+Deliberately not done:
+- body still uses height:100vh. On iOS Safari 100vh exceeds the visible
+  viewport, which can put the composer under the browser chrome. 100dvh
+  would fix it, but that is a mobile *height* problem rather than the width
+  problem this branch is scoped to, and it cannot be verified in this
+  environment — there is no real iOS Safari here, and shipping an unverified
+  change would contradict the rest of this log. Worth its own small branch.
+- No hamburger/drawer toggle, no conversation rename or delete affordance,
+  no swipe gestures, no touch-target audit beyond checking nothing overflows.
+- No change to the header, which already fits at 320px.
+- No tests. The change is CSS only and adds no logic. Note that tests/ on
+  main currently contains no test files at all — the 17 unit tests arrive
+  with PR #9 (feat/ai/model-fallback-and-titles).
+
+Rebase note: the task suggested rebasing onto whichever of
+feat/ai/model-fallback-and-titles or feat/ai/system-prompt had merged.
+Neither had at the time of writing — PR #9 is still open and
+feat/ai/system-prompt is unpushed and stacked on top of it — so this branch
+is cut from main. The media query was appended after the .sr-only rule at
+the end of <style>, while feat/ai/system-prompt inserts its .disclaimer
+rules before the `a { color: ... }` rule, so the two do not touch the same
+lines. That branch also carries its own @media (max-width: 600px) block for
+the disclaimer; the two queries target different selectors and coexist.
