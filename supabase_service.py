@@ -40,12 +40,36 @@ class SupabaseService:
 
         return self.client is not None
 
-    def sign_up(self, email: str, password: str) -> None:
-        """Create a new Supabase account for the signup route."""
+    def sign_up(self, email: str, password: str) -> bool:
+        """Create a new Supabase account for the signup route.
+
+        Returns False instead of raising when the email already has an
+        account, so routes.py can send the visitor to login instead of a
+        false "check your email" success message. Supabase deliberately does
+        not make this easy to detect: to avoid leaking which emails are
+        registered, sign_up() for an existing *confirmed* email returns a
+        look-alike success response with an empty `identities` list rather
+        than an error, when email confirmation is required. If email
+        confirmation is turned off in the dashboard, it instead raises with
+        "already registered" in the message. Both are handled here so this
+        works regardless of that project setting.
+        """
 
         if not self.client:
             raise RuntimeError("Supabase is not configured yet.")
-        self.client.auth.sign_up({"email": email, "password": password})
+
+        try:
+            response = self.client.auth.sign_up({"email": email, "password": password})
+        except Exception as exc:
+            if "already registered" in str(exc).lower() or "already exists" in str(exc).lower():
+                return False
+            raise
+
+        identities = getattr(response.user, "identities", None) if response.user else None
+        if identities is not None and len(identities) == 0:
+            return False
+
+        return True
 
     def sign_in(self, email: str, password: str):
         """Authenticate an existing Supabase user for the login route."""
