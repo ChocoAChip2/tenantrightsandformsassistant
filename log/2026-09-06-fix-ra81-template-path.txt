@@ -1,0 +1,58 @@
+Deployment Summary — Fix RA-81 PDF template path mismatch
+Date: 2026-09-06
+
+Requirement (from conversation, not BRANCH-PLAN.md): routes.py's intake ->
+PDF-download flow (added on main by Choco: ai_service.py's intake system
+prompt + form_service.py + the chat_message JSON-completion check) called
+FormService.fill_tenant_form(template_path="templates/RA-81.pdf"), but the
+file actually committed to the repo is templates/ra-81-fillable.pdf. On a
+case-sensitive filesystem -- which is what Render runs, unlike a
+developer's Mac/Windows machine -- pypdf's PdfReader would raise
+FileNotFoundError the moment a tenant finished the intake conversation and
+the app tried to build their PDF. That is the one point where this whole
+feature actually does something for the user, so this was a
+guaranteed-to-fail code path in production.
+
+Change shipped (branch fix/chat/ra81-template-filename, forked directly
+from main since this is a standalone one-line bug fix, not part of any
+other branch's feature work):
+
+- routes.py: changed the template_path argument from
+  "templates/RA-81.pdf" to "templates/ra-81-fillable.pdf" -- matching the
+  actual file, rather than renaming the PDF to match the code (renaming a
+  binary asset felt like the more disruptive/riskier change for a
+  one-line fix, and the existing filename is arguably more descriptive).
+
+- tests/test_pdf_completion_flow.py (new -- this is also the first test
+  file that exists directly on main; previously all test coverage lived
+  only on unmerged feature branches):
+    - test_the_referenced_pdf_template_actually_exists: asserts
+      templates/ra-81-fillable.pdf is a real file on disk. This is the
+      actual regression guard -- it would have caught this bug before it
+      ever reached production, and will catch it again if the template
+      is ever renamed without updating routes.py (or vice versa).
+    - test_completion_json_calls_form_service_with_the_real_template_path:
+      drives POST /chat/message through Flask's test client with a fake
+      AI service that returns the completion JSON, mocks
+      FormService.fill_tenant_form and flask.send_file so no real PDF
+      work happens, and asserts fill_tenant_form was called with the
+      exact template_path used in production.
+    - test_non_json_reply_is_returned_as_a_normal_chat_message: confirms
+      an ordinary (non-JSON) AI reply still returns as a normal chat
+      message and never calls FormService -- i.e. this fix didn't change
+      behavior for the common case.
+    - tests/__init__.py added since no tests/ package existed on main
+      before this branch.
+
+Verified locally:
+- `python -m unittest discover -s tests` -- 3/3 pass.
+- No real Gemini, Supabase, or pypdf/file-write call in any test.
+
+Deliberately not done:
+- Did not touch ai_service.py's intake system prompt, form_service.py's
+  field-name placeholders (Text1/Text2/Text3, already flagged in that
+  file's own comments as needing real field names later), or anything
+  else about the intake/PDF feature's design -- this branch is scoped to
+  the one filename bug that was explicitly reported.
+- Did not rename templates/ra-81-fillable.pdf -- fixed the code reference
+  instead (see above).
