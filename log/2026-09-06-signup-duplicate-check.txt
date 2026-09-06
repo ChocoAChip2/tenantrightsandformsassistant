@@ -1,0 +1,83 @@
+Deployment Summary — Signup Duplicate-Account Check + Login/Signup Reorganization
+Date: 2026-09-06
+
+Requirement (from conversation, not BRANCH-PLAN.md): the signup page should
+detect an email that already has an account, not create a duplicate or
+silently claim success, and should send the visitor to login via a button
+instead. Also asked to make the login and signup pages "more organized."
+
+Changes shipped (branch feat/auth/signup-duplicate-check):
+
+- supabase_service.py: sign_up() now returns bool instead of None. Supabase
+  deliberately makes "does this email already exist" hard to detect, to
+  avoid leaking registered emails to an attacker probing the signup
+  endpoint: with the dashboard's "Confirm email" setting on, signing up an
+  existing *confirmed* email returns a look-alike success response with an
+  empty `identities` list instead of an error; with it off, sign_up()
+  raises with "already registered" in the message instead. Checked both
+  the official Python SDK docs and community reports
+  (https://github.com/orgs/supabase/discussions/16770) before implementing,
+  since guessing wrong here either blocks real signups or lets duplicates
+  through silently. Both response shapes are handled so this works
+  regardless of that project setting, which we don't have direct visibility
+  into from here.
+
+- routes.py: the signup POST handler checks sign_up()'s return value. False
+  re-renders signup.html with existing_account_email set instead of
+  flashing "Sign-up successful, check your email" for an account that
+  wasn't (re)created and won't get a new confirmation email.
+
+- templates/signup.html: when existing_account_email is set, shows a notice
+  ("An account already exists for <email>") with an actual button link to
+  /login, above the (still-usable) form in case the visitor mistyped their
+  email and wants to try a different one.
+
+- templates/signup.html and templates/login.html: reorganized from bare
+  unstyled forms into a centered card with grouped label/input fields, one
+  consistent warm/single-accent color palette, and a shared brand header.
+  This palette is intentionally identical to the one used in
+  feat/chat/minimalist-redesign (:root custom properties block, same
+  values) so all three pages read as one product. These two branches
+  don't touch the same files, so either can merge first.
+
+- tests/: 10 new tests. test_supabase_service_signup.py covers both
+  duplicate-detection paths (obfuscated empty-identities response, and the
+  "already registered"/"already exists" exception wording), that an
+  unrelated exception still propagates, and that a future SDK response
+  missing the identities field entirely defaults to "created" rather than
+  misclassifying a real signup. test_signup_route.py drives the actual
+  Flask route through app.test_client() with a fake SupabaseService
+  injected via app.config (no real app.py/env vars needed), checking the
+  redirect-to-login path, the duplicate-account re-render path (asserts the
+  email and the /login button href are actually in the response body, not
+  just that flash() was called), and that missing form fields never call
+  sign_up() at all.
+
+Verified locally:
+- `python -m unittest discover -s tests` — 10/10 pass.
+- Rendered signup.html (default and existing_account_email states) and
+  login.html through Flask's template renderer and eyeballed the output
+  before sending previews.
+
+Deliberately not done:
+- Did not touch chat.html, ai_service.py, or any AI/chat behavior --
+  routes.py changes are scoped to the signup handler only.
+- Did not add a "resend confirmation email" action for the duplicate case;
+  the button only sends the visitor to login. Supabase's own login flow
+  already tells an unconfirmed user to check their email when they try to
+  log in, so this doesn't leave them stuck, but a dedicated resend flow
+  would be a reasonable follow-up if it turns out people land here often
+  with an unconfirmed account.
+- Did not factor the repeated :root token block out into a shared
+  base template/stylesheet -- each of the three HTML files stays fully
+  standalone, matching how the codebase already works (no Jinja
+  inheritance in use anywhere yet). Introducing one would be a real
+  refactor of its own and wasn't asked for.
+- Did not verify against the live Supabase project's actual "Confirm
+  email"/"Confirm phone" dashboard settings (no tool access to read that
+  config from here) -- the implementation handles both possible behaviors
+  defensively instead of assuming one.
+
+Next steps for a human: after merging, sign up with an email that already
+has a confirmed account on the live project once, to confirm which of the
+two code paths actually fires in this project's configuration.
