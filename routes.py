@@ -221,7 +221,7 @@ def chat_message():
                 # Build the completed PDF
                 pdf_path = FormService.fill_tenant_form(
                     json_data=parsed_response,
-                    template_path="templates/RA-81.pdf",
+                    template_path="templates/ra-81-fillable.pdf",
                     output_filename="completed_complaint.pdf"
                 )
                 
