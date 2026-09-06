@@ -19,15 +19,18 @@
     /* Same token values as chat.html/login.html/signup.html -- keep these
        :root blocks in sync across all four files if the palette changes. */
     :root {
+      /* Same formal, government-adjacent palette as chat.html -- cool
+         neutrals + a single civic blue accent instead of warm terracotta.
+         Keep these :root blocks in sync across both files. */
       color-scheme: light;
-      --bg: #f7f5f1;
+      --bg: #eef1f5;
       --surface: #ffffff;
-      --border: #e5e0d6;
-      --text: #2c2a26;
-      --muted: #746e63;
-      --accent: #c2683f;
-      --accent-hover: #ab5734;
-      --accent-tint: #f5e6dc;
+      --border: #d7dde5;
+      --text: #1c2733;
+      --muted: #5b6b7c;
+      --accent: #1c5d8c;
+      --accent-hover: #164a70;
+      --accent-tint: #dce8f2;
       --warning: #8a5a1f;
       --warning-tint: #f7ecd9;
       --error: #a3312a;
@@ -38,14 +41,14 @@
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
         color-scheme: dark;
-        --bg: #1c1b19;
-        --surface: #26241f;
-        --border: #3a372f;
-        --text: #ece7de;
-        --muted: #9b9488;
-        --accent: #e08a5f;
-        --accent-hover: #eba178;
-        --accent-tint: #3a2a20;
+        --bg: #101820;
+        --surface: #16212c;
+        --border: #2a3846;
+        --text: #e8edf2;
+        --muted: #93a3b3;
+        --accent: #5b9bd5;
+        --accent-hover: #7db2e0;
+        --accent-tint: #1f3547;
         --warning: #e8c27a;
         --warning-tint: #3a2f18;
         --error: #e28a83;
@@ -56,14 +59,14 @@
     }
     :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #1c1b19;
-      --surface: #26241f;
-      --border: #3a372f;
-      --text: #ece7de;
-      --muted: #9b9488;
-      --accent: #e08a5f;
-      --accent-hover: #eba178;
-      --accent-tint: #3a2a20;
+      --bg: #101820;
+      --surface: #16212c;
+      --border: #2a3846;
+      --text: #e8edf2;
+      --muted: #93a3b3;
+      --accent: #5b9bd5;
+      --accent-hover: #7db2e0;
+      --accent-tint: #1f3547;
       --warning: #e8c27a;
       --warning-tint: #3a2f18;
       --error: #e28a83;
@@ -101,7 +104,7 @@
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 22px;
     }
     .card h2 { margin: 0 0 4px; font-size: 15px; }
@@ -116,7 +119,7 @@
       align-items: center;
       gap: 8px;
       padding: 10px 14px;
-      border-radius: 10px;
+      border-radius: 6px;
       border: 1px solid var(--border);
       cursor: pointer;
       font-size: 13px;
@@ -165,7 +168,7 @@
     }
     a.button.secondary:hover { background: var(--bg); color: var(--accent); }
     .notice {
-      border-radius: 10px;
+      border-radius: 6px;
       padding: 10px 14px;
       font-size: 13px;
       margin: 0 0 16px;

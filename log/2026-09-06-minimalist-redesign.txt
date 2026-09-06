@@ -92,6 +92,26 @@ and a new Settings page
   update_account and fetch_all_conversations_with_messages. No real
   Supabase call in any of them.
 
+Follow-up (same day, same branch): more formal palette
+
+- templates/chat.html, templates/settings.html: swapped the warm
+  terracotta/cream palette for a cooler, more formal one -- a civic blue
+  accent (#1c5d8c light / #5b9bd5 dark) on cool gray-blue neutrals, closer
+  in register to nyc.gov/ny.gov without copying their exact colors, so the
+  app still reads as its own product rather than an official government
+  site. Also tightened corner radii across both files (14px/12px/10px
+  buttons, cards, bubbles, and the pill-shaped reference links down to
+  6-8px, with the reference links gaining a hairline border instead of a
+  pill background) for a crisper, less playful feel. Purely CSS custom
+  properties + a handful of border-radius values -- no markup, route, or
+  behavior changes.
+- login.html/signup.html (the auth redesign, a separate branch:
+  feat/auth/signup-duplicate-check) were NOT updated to match, since that
+  branch forked from main independently and this session doesn't have it
+  checked out right now -- flagging so whoever reconciles these branches
+  applies the same palette there too, or the app will look inconsistent
+  between auth pages and chat/settings once both merge.
+
 Deliberately not done:
 - No new "memory", "sources", or task-panel UI, and no persistent
   per-user/per-chat memory files -- that was a separate, much larger ask

@@ -28,43 +28,47 @@
        script above, and it wins in both directions here); with no explicit
        choice, prefers-color-scheme decides. */
     :root {
+      /* A formal, government-adjacent palette (cool neutrals + a single
+         civic blue) rather than the earlier warm terracotta scheme --
+         closer in register to nyc.gov/ny.gov without copying their exact
+         colors, so the app still reads as its own product. */
       color-scheme: light;
-      --bg: #f7f5f1;
+      --bg: #eef1f5;
       --surface: #ffffff;
-      --border: #e5e0d6;
-      --text: #2c2a26;
-      --muted: #746e63;
-      --accent: #c2683f;
-      --accent-hover: #ab5734;
-      --accent-tint: #f5e6dc;
+      --border: #d7dde5;
+      --text: #1c2733;
+      --muted: #5b6b7c;
+      --accent: #1c5d8c;
+      --accent-hover: #164a70;
+      --accent-tint: #dce8f2;
       --warning: #8a5a1f;
       --warning-tint: #f7ecd9;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
         color-scheme: dark;
-        --bg: #1c1b19;
-        --surface: #26241f;
-        --border: #3a372f;
-        --text: #ece7de;
-        --muted: #9b9488;
-        --accent: #e08a5f;
-        --accent-hover: #eba178;
-        --accent-tint: #3a2a20;
+        --bg: #101820;
+        --surface: #16212c;
+        --border: #2a3846;
+        --text: #e8edf2;
+        --muted: #93a3b3;
+        --accent: #5b9bd5;
+        --accent-hover: #7db2e0;
+        --accent-tint: #1f3547;
         --warning: #e8c27a;
         --warning-tint: #3a2f18;
       }
     }
     :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #1c1b19;
-      --surface: #26241f;
-      --border: #3a372f;
-      --text: #ece7de;
-      --muted: #9b9488;
-      --accent: #e08a5f;
-      --accent-hover: #eba178;
-      --accent-tint: #3a2a20;
+      --bg: #101820;
+      --surface: #16212c;
+      --border: #2a3846;
+      --text: #e8edf2;
+      --muted: #93a3b3;
+      --accent: #5b9bd5;
+      --accent-hover: #7db2e0;
+      --accent-tint: #1f3547;
       --warning: #e8c27a;
       --warning-tint: #3a2f18;
     }
@@ -113,7 +117,8 @@
       align-items: center;
       gap: 6px;
       padding: 5px 10px;
-      border-radius: 999px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
       background: var(--accent-tint);
       color: var(--accent-hover);
       font-size: 12px;
@@ -242,7 +247,7 @@
     .message.user .bubble {
       background: var(--accent-tint);
       color: var(--text);
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 10px 14px;
       line-height: 1.5;
       white-space: pre-wrap;
@@ -263,7 +268,7 @@
       min-height: 48px;
       max-height: 180px;
       padding: 12px 14px;
-      border-radius: 12px;
+      border-radius: 6px;
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--text);
@@ -279,7 +284,7 @@
       min-width: 76px;
       height: 44px;
       border: 0;
-      border-radius: 12px;
+      border-radius: 6px;
       background: var(--accent);
       color: #fff;
       font-weight: 600;
@@ -297,7 +302,7 @@
       background: var(--warning-tint);
       color: var(--warning);
       padding: 10px 14px;
-      border-radius: 10px;
+      border-radius: 6px;
       font-size: 13px;
     }
     a { color: var(--accent); }
