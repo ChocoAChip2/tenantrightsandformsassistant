@@ -113,7 +113,8 @@ def chat():
         return redirect(url_for("main.login"))
 
     supabase_service = get_supabase_service()
-    conversations = supabase_service.list_conversations(user_client)
+    conversations = supabase_service.list_conversations(user_client, archived=False)
+    archived_conversations = supabase_service.list_conversations(user_client, archived=True)
     conversation_id = request.args.get("conversation_id")
     messages = []
 
@@ -130,6 +131,7 @@ def chat():
         user_email=session["user_email"],
         ai_ready=get_ai_service().is_ready(),
         conversations=conversations,
+        archived_conversations=archived_conversations,
         active_conversation_id=conversation_id,
         messages=messages,
     )
@@ -156,6 +158,88 @@ def create_conversation():
         logger.exception("Failed to create conversation.")
         flash("Could not start a new conversation. Please try again.", "error")
         return redirect(url_for("main.chat"))
+
+
+@main_bp.route("/conversations/<conversation_id>/archive", methods=["POST"])
+def archive_conversation(conversation_id):
+    """Soft-hide a conversation from the main sidebar list without deleting it."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    try:
+        get_supabase_service().set_conversation_archived(
+            user_client, conversation_id, session["user_id"], archived=True
+        )
+        flash("Conversation archived.", "success")
+    except ValueError:
+        flash("That conversation could not be found.", "error")
+    except Exception:
+        logger.exception("Failed to archive conversation.")
+        flash("Could not archive that conversation. Please try again.", "error")
+
+    return redirect(url_for("main.chat"))
+
+
+@main_bp.route("/conversations/<conversation_id>/unarchive", methods=["POST"])
+def unarchive_conversation(conversation_id):
+    """Move a conversation back into the main sidebar list."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    try:
+        get_supabase_service().set_conversation_archived(
+            user_client, conversation_id, session["user_id"], archived=False
+        )
+        flash("Conversation restored.", "success")
+    except ValueError:
+        flash("That conversation could not be found.", "error")
+    except Exception:
+        logger.exception("Failed to unarchive conversation.")
+        flash("Could not restore that conversation. Please try again.", "error")
+
+    return redirect(url_for("main.chat"))
+
+
+@main_bp.route("/conversations/<conversation_id>/delete", methods=["POST"])
+def delete_conversation(conversation_id):
+    """Permanently delete a conversation and its messages. Cannot be undone."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    try:
+        get_supabase_service().delete_conversation(user_client, conversation_id, session["user_id"])
+        flash("Conversation deleted.", "success")
+    except ValueError:
+        flash("That conversation could not be found.", "error")
+    except Exception:
+        logger.exception("Failed to delete conversation.")
+        flash("Could not delete that conversation. Please try again.", "error")
+
+    # If the conversation that was just deleted was the active one, this
+    # redirect (with no conversation_id) naturally lands back on the
+    # greeting/empty state instead of a dead link.
+    return redirect(url_for("main.chat"))
 
 
 @main_bp.route("/chat/message", methods=["POST"])

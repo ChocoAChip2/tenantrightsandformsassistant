@@ -17,15 +17,16 @@ _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__
 
 
 class FakeSupabaseService:
-    def __init__(self, conversations=None, messages=None):
+    def __init__(self, conversations=None, archived_conversations=None, messages=None):
         self._conversations = conversations or []
+        self._archived_conversations = archived_conversations or []
         self._messages = messages or []
 
     def build_user_scoped_client(self, access_token):
         return object()  # opaque stand-in; never touched again in these tests
 
-    def list_conversations(self, user_client):
-        return self._conversations
+    def list_conversations(self, user_client, archived=False):
+        return self._archived_conversations if archived else self._conversations
 
     def ensure_conversation_for_user(self, user_client, conversation_id, user_id):
         return None
@@ -82,7 +83,7 @@ class ChatPageRenderTests(unittest.TestCase):
         # No GEMINI_API_KEY warning banner when the AI service is ready.
         self.assertNotIn("GEMINI_API_KEY is not configured", body)
 
-    def test_no_active_conversation_shows_empty_state(self):
+    def test_no_active_conversation_shows_dynamic_greeting(self):
         app = _build_test_app(FakeSupabaseService(), FakeAIService(ready=True))
         client = app.test_client()
         _logged_in_session(client)
@@ -90,7 +91,42 @@ class ChatPageRenderTests(unittest.TestCase):
         response = client.get("/chat")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Start a new chat on the left to begin.", response.get_data(as_text=True))
+        body = response.get_data(as_text=True)
+        # Server-rendered fallback greeting (JS overwrites this client-side
+        # with a real time-of-day greeting once it runs).
+        self.assertIn("Welcome, Tenant", body)
+        self.assertIn('id="greeting-text"', body)
+        self.assertIn('id="greeting-date"', body)
+
+    def test_archived_conversations_render_in_collapsible_section(self):
+        service = FakeSupabaseService(
+            conversations=[{"id": "c1", "title": "Active chat", "archived_at": None}],
+            archived_conversations=[{"id": "c2", "title": "Old chat", "archived_at": "2026-01-01T00:00:00Z"}],
+        )
+        app = _build_test_app(service, FakeAIService(ready=True))
+        client = app.test_client()
+        _logged_in_session(client)
+
+        response = client.get("/chat")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("Active chat", body)
+        self.assertIn("Old chat", body)
+        self.assertIn("Archived (1)", body)
+
+    def test_sidebar_footer_user_menu_present(self):
+        app = _build_test_app(FakeSupabaseService(), FakeAIService(ready=True))
+        client = app.test_client()
+        _logged_in_session(client)
+
+        response = client.get("/chat")
+
+        body = response.get_data(as_text=True)
+        self.assertIn('id="user-menu-trigger"', body)
+        self.assertIn("tenant@example.com", body)
+        self.assertIn("Settings", body)
+        self.assertIn("Log out", body)
 
     def test_ai_not_ready_shows_warning_banner(self):
         app = _build_test_app(FakeSupabaseService(), FakeAIService(ready=False))

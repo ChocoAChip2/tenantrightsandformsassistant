@@ -55,10 +55,12 @@ class UpdateAccountTests(unittest.TestCase):
 
 
 class FetchAllConversationsWithMessagesTests(unittest.TestCase):
-    def test_attaches_messages_to_each_conversation(self):
+    def test_attaches_messages_to_each_active_and_archived_conversation(self):
         service = SupabaseService(client=mock.MagicMock())
         service.list_conversations = mock.MagicMock(
-            return_value=[{"id": "c1", "title": "Broken heat"}, {"id": "c2", "title": "Deposit"}]
+            side_effect=lambda user_client, archived=False: (
+                [{"id": "c2", "title": "Deposit"}] if archived else [{"id": "c1", "title": "Broken heat"}]
+            )
         )
         service.fetch_messages_for_conversation = mock.MagicMock(
             side_effect=lambda user_client, conversation_id: [{"role": "user", "content": conversation_id}]
@@ -66,6 +68,8 @@ class FetchAllConversationsWithMessagesTests(unittest.TestCase):
 
         result = service.fetch_all_conversations_with_messages(user_client=object())
 
+        # Both the active conversation (c1) and the archived one (c2) are
+        # included -- archiving something shouldn't drop it from the export.
         self.assertEqual(result[0]["messages"], [{"role": "user", "content": "c1"}])
         self.assertEqual(result[1]["messages"], [{"role": "user", "content": "c2"}])
 

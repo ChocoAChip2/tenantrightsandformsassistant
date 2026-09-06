@@ -159,3 +159,104 @@ Merge with origin/main (same day, same branch)
   unchanged.
 - All 21 tests still pass after the merge (pypdf/gunicorn from main's
   requirements.txt installed to run them locally).
+
+Follow-up (same day, same branch): archive/delete chats, dynamic greeting,
+bottom-left account menu
+
+- Supabase schema: added public.conversations.archived_at (timestamptz,
+  null = active) via a live migration (add_conversation_archived_at,
+  applied directly through the Supabase MCP tools since this repo has no
+  migrations/ folder or CLI-based migration workflow yet -- the SQL is
+  recorded here for history: `alter table public.conversations add column
+  if not exists archived_at timestamptz null`). messages.conversation_id
+  already has ON DELETE CASCADE, confirmed via pg_constraint, so deleting
+  a conversation needs no separate messages cleanup.
+- supabase_service.py: list_conversations(user_client, archived=False)
+  now filters on archived_at (active by default, archived on request);
+  new set_conversation_archived(...) and delete_conversation(...), both
+  ownership-scoped via .eq("user_id", ...) and raising ValueError when no
+  row matches (mirrors ensure_conversation_for_user's pattern).
+  fetch_all_conversations_with_messages (the settings-page chat-history
+  download) now explicitly fetches both active and archived conversations
+  so archiving something doesn't silently drop it from a user's own
+  downloadable record.
+- routes.py: three new routes, all POST, all ownership-checked through the
+  RLS-scoped client plus the service methods' own .eq("user_id", ...):
+  /conversations/<id>/archive, /conversations/<id>/unarchive,
+  /conversations/<id>/delete. Each flashes a result and redirects to
+  /chat. GET /chat now also fetches archived_conversations and passes it
+  to the template alongside the existing active conversations.
+- templates/chat.html: each sidebar conversation is now a row with the
+  title link plus archive/delete icon buttons that appear on hover/focus
+  (plain <form method="POST"> submits, no AJAX -- consistent with how
+  "+ New chat" already worked). Delete asks for confirmation via a plain
+  browser confirm() before submitting, since it's irreversible. Archived
+  conversations live in a collapsible <details> "Archived (N)" section
+  below the active list, each with a restore button instead of archive.
+  On mobile (<=700px) the archive/delete buttons and the Archived section
+  are hidden -- the horizontal-scroll chip strip doesn't have room for a
+  free hand to tap a small icon button, and a <details> section doesn't
+  fit that layout either; both are desktop-only for now.
+- templates/chat.html: found and fixed a real pre-existing gap while
+  wiring up the archive/delete flash messages -- chat.html never rendered
+  get_flashed_messages() at all, so every flash() call already in
+  routes.py's chat-related error paths (expired session, conversation not
+  found, "could not start a new conversation", etc.) was silently
+  swallowed. Added a shared `.flash`/`.flash.success`/`.flash.error`
+  block right under the header (same place as the GEMINI_API_KEY
+  warning), plus the missing --error/--success/*-tint tokens in
+  chat.html's three :root blocks (light, dark-via-media, dark-explicit)
+  to match settings.html's palette.
+- templates/chat.html: the no-conversation-selected view is now a
+  greeting landing page instead of a single line of hint text -- this is
+  also already the page a user lands on right after logging in (login
+  redirects to /chat with no conversation_id), so no new route was added.
+  Jinja renders a plain, timezone-agnostic fallback ("Welcome, <name>")
+  so there's never a blank flash before JS runs; a script then overwrites
+  it with a real time-of-day greeting ("Good morning/afternoon/evening" by
+  hour, "Working late" after midnight) and today's date, computed from
+  `new Date()` so it reflects the visitor's own local clock rather than
+  the server's (which doesn't know the visitor's timezone). Added three
+  suggestion-chip buttons (repairs/heat, eviction notice, security
+  deposit) that start a new named conversation in one click, since a
+  landing page with only a greeting and nothing to do felt incomplete.
+- templates/chat.html: moved account actions out of the header into a
+  Claude-Desktop-style bottom-left control in the sidebar footer -- a
+  button showing an avatar-initial + the user's email that opens a small
+  popup menu (Settings, Log out, with room to add more items later)
+  instead of two plain header links. Restructured .sidebar into a
+  scrolling region (new chat form + conversation list + archived section)
+  plus a fixed, non-scrolling footer, so the account menu stays reachable
+  at the bottom regardless of how many conversations exist. Menu opens on
+  click, closes on an outside click or Escape, and keeps aria-expanded in
+  sync; no new dependency, plain vanilla JS.
+- tests/: test_chat_page_render.py updated for the new empty-state
+  greeting markup and extended with archived-section and sidebar-footer
+  render checks; new tests/test_conversation_archive_delete.py (14 tests)
+  covering the three new routes (auth checks, success paths, "not found"
+  handling) and the two new SupabaseService methods plus the
+  list_conversations archived filter, all against mocked
+  services/Supabase clients.
+
+Verified locally:
+- `python -m unittest discover -s tests` -- 45/45 pass.
+- Rendered chat.html both with an active conversation (plus one archived
+  conversation, to check the Archived section) and in the empty/greeting
+  state through Flask's template renderer before sending previews.
+
+Deliberately not done:
+- No AJAX for archive/delete/restore -- plain form POSTs with a full page
+  reload, matching how "+ New chat" already works in this codebase.
+- No "download this one conversation" button per row -- the settings page
+  still only offers "download everything" (already noted as a possible
+  follow-up in this same log file, from the settings-page work above).
+- No undo for delete beyond the browser confirm() prompt -- archiving is
+  the offered "soft" alternative; there's no deleted-items recovery.
+- Did not extend archive/delete to mobile (<=700px) -- see above.
+- Did not add the "future things" implied by the account-menu request
+  beyond Settings/Log out -- the menu markup and CSS are built to make
+  adding a third item later a one-line change (another <a role="menuitem">
+  in templates/chat.html), but nothing further was added speculatively.
+- Did not touch login.html/signup.html/settings.html's own headers -- the
+  bottom-left account menu is specific to the chat page's sidebar, since
+  that's the only page in this app with a persistent sidebar at all.
