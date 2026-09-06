@@ -1,0 +1,262 @@
+Deployment Summary — Chat UI Minimalist Redesign
+Date: 2026-09-06
+
+Requirement (from conversation, not BRANCH-PLAN.md): the chat page looked
+"artificial" / like a generic ChatGPT clone rather than a normal, minimal
+chat client, and used multiple grays rather than a single cohesive color.
+
+Changes shipped (branch feat/chat/minimalist-redesign):
+
+- templates/chat.html: replaced the dark, multi-gray ChatGPT-styled theme
+  with the same warm, light, single-accent palette used in
+  feat/auth/signup-duplicate-check's login/signup redesign (identical :root
+  custom-property values, so if these two branches both merge the app is
+  visually consistent everywhere). Dropped the bordered "chat panel" box
+  that #chat-box used to be -- messages now sit directly on the page
+  background, which is most of what made the old design feel like a boxed
+  widget instead of a real chat surface. Assistant turns render as plain
+  text with no box or border; user turns get one light accent-tinted
+  rounded rectangle, right-aligned, so the two roles stay easy to tell
+  apart without adding more colors.
+- Purely a visual change: no route, service, or JS behavior touched. Kept
+  every element id/class the existing <script> block depends on
+  (#chat-box, #chat-form, #message-input, #send-btn, data-conversation-id,
+  message/user/assistant/label classes) so the script required zero edits.
+- Carried the mobile breakpoint from the (separate, unmerged)
+  fix/chat/mobile-layout branch forward, adapted to the new markup, since
+  this branch forks from main and that fix isn't there yet. Flagging this
+  explicitly: whoever merges both feat/chat/minimalist-redesign and
+  fix/chat/mobile-layout should expect the @media (max-width: 700px) block
+  to need a manual re-check for overlap/conflict, since both branches now
+  touch it independently.
+
+- tests/: 4 new smoke tests (test_chat_page_render.py) drive the real
+  /chat route through Flask's test client with fake AI/Supabase services --
+  active conversation with message history, empty state, the
+  GEMINI_API_KEY-missing warning banner, and the logged-out redirect. These
+  exist because this branch's only real risk is a Jinja/template
+  regression, not a logic bug; there was no existing route-level test
+  coverage for GET /chat before this.
+
+Verified locally:
+- `python -m unittest discover -s tests` — 4/4 pass.
+- Rendered chat.html directly (active conversation with sample messages,
+  and the empty/no-conversation state) through Flask's template renderer
+  and eyeballed the output before sending previews.
+
+Follow-up changes (same day, same branch): theme system, reference links,
+and a new Settings page
+
+- templates/chat.html: added a light/dark/system theme system. A pre-paint
+  inline <script> in <head> reads localStorage["theme"] and sets
+  data-theme on <html> before first paint (no flash of the wrong theme).
+  Dark-mode token values are layered on the existing :root palette two
+  ways: under `@media (prefers-color-scheme: dark)` scoped to
+  `:not([data-theme="light"])` for an unset/system choice, and again under
+  `:root[data-theme="dark"]` so an explicit choice always wins. No new
+  dependency; settings.html below is what writes the localStorage key.
+- templates/chat.html: added a header reference-links row linking to NYC
+  HPD (https://www.nyc.gov/site/hpd/index.page) and NY State HCR
+  (https://hcr.ny.gov/) -- the two official tenant-rights bodies most
+  relevant to this app, rather than generic nyc.gov/ny.gov home pages.
+  Both open in a new tab so a tenant doesn't lose their conversation. Also
+  added a "Settings" link next to "Log out".
+- templates/settings.html (new) + routes.py (`GET /settings`,
+  `POST /settings/account`, `GET /settings/download-logs`) +
+  supabase_service.py (`update_account`, `fetch_all_conversations_with_messages`):
+  a settings page with three sections.
+    - Appearance: the light/dark/system radio buttons that drive the theme
+      system above. Client-side only (localStorage), no Supabase involved,
+      "system" removes the stored key entirely so prefers-color-scheme
+      decides.
+    - Account: change email and/or password. This goes through the
+      Supabase auth (GoTrue) client via `set_session(access_token,
+      refresh_token)` + `update_user(...)`, not postgrest -- the
+      RLS-scoped client used everywhere else in this file doesn't carry an
+      auth session, only a postgrest bearer token, so a dedicated method
+      was needed. An email change requires the user to confirm it from a
+      link Supabase emails to the new address before it takes effect
+      (standard Supabase behavior); the settings page says this explicitly
+      so the user isn't confused when their login email doesn't change
+      immediately. A password change takes effect immediately.
+    - Your data: "Download my chat history" streams every conversation
+      and message the signed-in user has as a single Markdown file
+      (Content-Disposition: attachment), built entirely from data already
+      readable under existing RLS policies -- no new table, migration, or
+      Supabase schema change.
+- tests/test_settings_page.py (13 tests) and
+  tests/test_supabase_service_account.py (5 tests): route-level tests
+  (settings page renders, logged-out redirects, account-update validation
+  and success/failure paths, download route content and headers) plus
+  service-level tests mocking the Supabase SDK client directly for
+  update_account and fetch_all_conversations_with_messages. No real
+  Supabase call in any of them.
+
+Follow-up (same day, same branch): more formal palette
+
+- templates/chat.html, templates/settings.html: swapped the warm
+  terracotta/cream palette for a cooler, more formal one -- a civic blue
+  accent (#1c5d8c light / #5b9bd5 dark) on cool gray-blue neutrals, closer
+  in register to nyc.gov/ny.gov without copying their exact colors, so the
+  app still reads as its own product rather than an official government
+  site. Also tightened corner radii across both files (14px/12px/10px
+  buttons, cards, bubbles, and the pill-shaped reference links down to
+  6-8px, with the reference links gaining a hairline border instead of a
+  pill background) for a crisper, less playful feel. Purely CSS custom
+  properties + a handful of border-radius values -- no markup, route, or
+  behavior changes.
+- login.html/signup.html (the auth redesign, a separate branch:
+  feat/auth/signup-duplicate-check) were NOT updated to match, since that
+  branch forked from main independently and this session doesn't have it
+  checked out right now -- flagging so whoever reconciles these branches
+  applies the same palette there too, or the app will look inconsistent
+  between auth pages and chat/settings once both merge.
+
+Deliberately not done:
+- No new "memory", "sources", or task-panel UI, and no persistent
+  per-user/per-chat memory files -- that was a separate, much larger ask
+  raised in the same conversation (real product-scope decisions plus live
+  Supabase schema changes, and it also touches ai_service.py, which
+  another contributor is actively changing on main right now) and is being
+  scoped with the user before any code or migration work starts, rather
+  than guessed at here.
+- Did not touch ai_service.py or routes.py's chat_message logic --
+  everything above is either presentational or additive new routes.
+- "Download logs" was interpreted as the user's own chat history, not this
+  repo's internal log/*.txt deployment logs -- exposing the latter to end
+  users would leak internal deployment details and isn't what "transparency
+  for the user" was asking for. Flagging this interpretation explicitly in
+  case it wasn't what was meant.
+- Did not add a per-conversation download button (only a single "download
+  everything" button on the settings page) -- can be added as a follow-up
+  if per-chat export turns out to be what's wanted.
+- Did not resolve the mobile-layout branch overlap noted above; that's a
+  merge-time concern for whichever branch lands second.
+
+Merge with origin/main (same day, same branch)
+
+- Merged in fix/chat/mobile-layout (already on main via PR #11 by the time
+  this branch caught up), the new intake-clerk system prompt in
+  ai_service.py, form_service.py (PDF form filling), and routes.py's
+  chat_message handling of the completion JSON -> PDF download, plus the
+  client-side blob-download JS Choco added to chat.html for that response.
+- The only real conflict was the @media (max-width: 700px) block, exactly
+  as flagged when this branch was created: resolved by keeping this
+  branch's selectors/tokens (var(--surface), #chat-box padding, the
+  header-actions/ref-links wrapping rules) since main's version used the
+  old dark theme's variable names (var(--panel)) and markup structure
+  (no #chat-box wrapper) that no longer exist here. No loss of behavior --
+  same breakpoint, same layout logic, just targeting this branch's markup.
+- routes.py and supabase_service.py merged with no conflicts (this
+  branch's settings routes/methods sit in different functions than main's
+  intake/PDF-download changes).
+- Did NOT fix the known bug where routes.py's FormService.fill_tenant_form
+  call still points at "templates/RA-81.pdf" while the file actually in
+  the repo is "templates/ra-81-fillable.pdf" (case- and name-mismatched --
+  will throw on a case-sensitive filesystem the moment a user completes
+  the intake flow). That's Choco's in-progress feature, not something this
+  branch touches; flagging again here since the merge carries it forward
+  unchanged.
+- All 21 tests still pass after the merge (pypdf/gunicorn from main's
+  requirements.txt installed to run them locally).
+
+Follow-up (same day, same branch): archive/delete chats, dynamic greeting,
+bottom-left account menu
+
+- Supabase schema: added public.conversations.archived_at (timestamptz,
+  null = active) via a live migration (add_conversation_archived_at,
+  applied directly through the Supabase MCP tools since this repo has no
+  migrations/ folder or CLI-based migration workflow yet -- the SQL is
+  recorded here for history: `alter table public.conversations add column
+  if not exists archived_at timestamptz null`). messages.conversation_id
+  already has ON DELETE CASCADE, confirmed via pg_constraint, so deleting
+  a conversation needs no separate messages cleanup.
+- supabase_service.py: list_conversations(user_client, archived=False)
+  now filters on archived_at (active by default, archived on request);
+  new set_conversation_archived(...) and delete_conversation(...), both
+  ownership-scoped via .eq("user_id", ...) and raising ValueError when no
+  row matches (mirrors ensure_conversation_for_user's pattern).
+  fetch_all_conversations_with_messages (the settings-page chat-history
+  download) now explicitly fetches both active and archived conversations
+  so archiving something doesn't silently drop it from a user's own
+  downloadable record.
+- routes.py: three new routes, all POST, all ownership-checked through the
+  RLS-scoped client plus the service methods' own .eq("user_id", ...):
+  /conversations/<id>/archive, /conversations/<id>/unarchive,
+  /conversations/<id>/delete. Each flashes a result and redirects to
+  /chat. GET /chat now also fetches archived_conversations and passes it
+  to the template alongside the existing active conversations.
+- templates/chat.html: each sidebar conversation is now a row with the
+  title link plus archive/delete icon buttons that appear on hover/focus
+  (plain <form method="POST"> submits, no AJAX -- consistent with how
+  "+ New chat" already worked). Delete asks for confirmation via a plain
+  browser confirm() before submitting, since it's irreversible. Archived
+  conversations live in a collapsible <details> "Archived (N)" section
+  below the active list, each with a restore button instead of archive.
+  On mobile (<=700px) the archive/delete buttons and the Archived section
+  are hidden -- the horizontal-scroll chip strip doesn't have room for a
+  free hand to tap a small icon button, and a <details> section doesn't
+  fit that layout either; both are desktop-only for now.
+- templates/chat.html: found and fixed a real pre-existing gap while
+  wiring up the archive/delete flash messages -- chat.html never rendered
+  get_flashed_messages() at all, so every flash() call already in
+  routes.py's chat-related error paths (expired session, conversation not
+  found, "could not start a new conversation", etc.) was silently
+  swallowed. Added a shared `.flash`/`.flash.success`/`.flash.error`
+  block right under the header (same place as the GEMINI_API_KEY
+  warning), plus the missing --error/--success/*-tint tokens in
+  chat.html's three :root blocks (light, dark-via-media, dark-explicit)
+  to match settings.html's palette.
+- templates/chat.html: the no-conversation-selected view is now a
+  greeting landing page instead of a single line of hint text -- this is
+  also already the page a user lands on right after logging in (login
+  redirects to /chat with no conversation_id), so no new route was added.
+  Jinja renders a plain, timezone-agnostic fallback ("Welcome, <name>")
+  so there's never a blank flash before JS runs; a script then overwrites
+  it with a real time-of-day greeting ("Good morning/afternoon/evening" by
+  hour, "Working late" after midnight) and today's date, computed from
+  `new Date()` so it reflects the visitor's own local clock rather than
+  the server's (which doesn't know the visitor's timezone). Added three
+  suggestion-chip buttons (repairs/heat, eviction notice, security
+  deposit) that start a new named conversation in one click, since a
+  landing page with only a greeting and nothing to do felt incomplete.
+- templates/chat.html: moved account actions out of the header into a
+  Claude-Desktop-style bottom-left control in the sidebar footer -- a
+  button showing an avatar-initial + the user's email that opens a small
+  popup menu (Settings, Log out, with room to add more items later)
+  instead of two plain header links. Restructured .sidebar into a
+  scrolling region (new chat form + conversation list + archived section)
+  plus a fixed, non-scrolling footer, so the account menu stays reachable
+  at the bottom regardless of how many conversations exist. Menu opens on
+  click, closes on an outside click or Escape, and keeps aria-expanded in
+  sync; no new dependency, plain vanilla JS.
+- tests/: test_chat_page_render.py updated for the new empty-state
+  greeting markup and extended with archived-section and sidebar-footer
+  render checks; new tests/test_conversation_archive_delete.py (14 tests)
+  covering the three new routes (auth checks, success paths, "not found"
+  handling) and the two new SupabaseService methods plus the
+  list_conversations archived filter, all against mocked
+  services/Supabase clients.
+
+Verified locally:
+- `python -m unittest discover -s tests` -- 45/45 pass.
+- Rendered chat.html both with an active conversation (plus one archived
+  conversation, to check the Archived section) and in the empty/greeting
+  state through Flask's template renderer before sending previews.
+
+Deliberately not done:
+- No AJAX for archive/delete/restore -- plain form POSTs with a full page
+  reload, matching how "+ New chat" already works in this codebase.
+- No "download this one conversation" button per row -- the settings page
+  still only offers "download everything" (already noted as a possible
+  follow-up in this same log file, from the settings-page work above).
+- No undo for delete beyond the browser confirm() prompt -- archiving is
+  the offered "soft" alternative; there's no deleted-items recovery.
+- Did not extend archive/delete to mobile (<=700px) -- see above.
+- Did not add the "future things" implied by the account-menu request
+  beyond Settings/Log out -- the menu markup and CSS are built to make
+  adding a third item later a one-line change (another <a role="menuitem">
+  in templates/chat.html), but nothing further was added speculatively.
+- Did not touch login.html/signup.html/settings.html's own headers -- the
+  bottom-left account menu is specific to the chat page's sidebar, since
+  that's the only page in this app with a persistent sidebar at all.

@@ -122,7 +122,8 @@ def chat():
         return redirect(url_for("main.login"))
 
     supabase_service = get_supabase_service()
-    conversations = supabase_service.list_conversations(user_client)
+    conversations = supabase_service.list_conversations(user_client, archived=False)
+    archived_conversations = supabase_service.list_conversations(user_client, archived=True)
     conversation_id = request.args.get("conversation_id")
     messages = []
 
@@ -139,6 +140,7 @@ def chat():
         user_email=session["user_email"],
         ai_ready=get_ai_service().is_ready(),
         conversations=conversations,
+        archived_conversations=archived_conversations,
         active_conversation_id=conversation_id,
         messages=messages,
     )
@@ -165,6 +167,88 @@ def create_conversation():
         logger.exception("Failed to create conversation.")
         flash("Could not start a new conversation. Please try again.", "error")
         return redirect(url_for("main.chat"))
+
+
+@main_bp.route("/conversations/<conversation_id>/archive", methods=["POST"])
+def archive_conversation(conversation_id):
+    """Soft-hide a conversation from the main sidebar list without deleting it."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    try:
+        get_supabase_service().set_conversation_archived(
+            user_client, conversation_id, session["user_id"], archived=True
+        )
+        flash("Conversation archived.", "success")
+    except ValueError:
+        flash("That conversation could not be found.", "error")
+    except Exception:
+        logger.exception("Failed to archive conversation.")
+        flash("Could not archive that conversation. Please try again.", "error")
+
+    return redirect(url_for("main.chat"))
+
+
+@main_bp.route("/conversations/<conversation_id>/unarchive", methods=["POST"])
+def unarchive_conversation(conversation_id):
+    """Move a conversation back into the main sidebar list."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    try:
+        get_supabase_service().set_conversation_archived(
+            user_client, conversation_id, session["user_id"], archived=False
+        )
+        flash("Conversation restored.", "success")
+    except ValueError:
+        flash("That conversation could not be found.", "error")
+    except Exception:
+        logger.exception("Failed to unarchive conversation.")
+        flash("Could not restore that conversation. Please try again.", "error")
+
+    return redirect(url_for("main.chat"))
+
+
+@main_bp.route("/conversations/<conversation_id>/delete", methods=["POST"])
+def delete_conversation(conversation_id):
+    """Permanently delete a conversation and its messages. Cannot be undone."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    try:
+        get_supabase_service().delete_conversation(user_client, conversation_id, session["user_id"])
+        flash("Conversation deleted.", "success")
+    except ValueError:
+        flash("That conversation could not be found.", "error")
+    except Exception:
+        logger.exception("Failed to delete conversation.")
+        flash("Could not delete that conversation. Please try again.", "error")
+
+    # If the conversation that was just deleted was the active one, this
+    # redirect (with no conversation_id) naturally lands back on the
+    # greeting/empty state instead of a dead link.
+    return redirect(url_for("main.chat"))
 
 
 @main_bp.route("/chat/message", methods=["POST"])
@@ -246,6 +330,107 @@ def chat_message():
     except Exception:
         logger.exception("Failed to generate AI response.")
         return jsonify({"error": "The AI service is currently unavailable. Please try again shortly."}), 500
+
+
+@main_bp.route("/settings")
+def settings():
+    """Show the settings page: appearance, account, and data export."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    return render_template("settings.html", user_email=session["user_email"])
+
+
+@main_bp.route("/settings/account", methods=["POST"])
+def update_account():
+    """Update the signed-in user's email and/or password via Supabase auth."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    access_token = session.get("access_token")
+    refresh_token = session.get("refresh_token")
+    if not access_token or not refresh_token:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    new_email = request.form.get("email", "").strip()
+    new_password = request.form.get("password", "")
+    confirm_password = request.form.get("confirm_password", "")
+
+    if not new_email and not new_password:
+        flash("Enter a new email and/or password to update your account.", "error")
+        return redirect(url_for("main.settings"))
+
+    if new_password and new_password != confirm_password:
+        flash("New password and confirmation do not match.", "error")
+        return redirect(url_for("main.settings"))
+
+    if new_password and len(new_password) < 6:
+        flash("Password must be at least 6 characters.", "error")
+        return redirect(url_for("main.settings"))
+
+    try:
+        get_supabase_service().update_account(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            email=new_email or None,
+            password=new_password or None,
+        )
+        if new_email:
+            flash(f"Check {new_email} for a confirmation link before the new email takes effect.", "success")
+        if new_password:
+            flash("Password updated.", "success")
+    except Exception as exc:
+        logger.exception("Failed to update account.")
+        flash(f"Could not update account: {exc}", "error")
+
+    return redirect(url_for("main.settings"))
+
+
+@main_bp.route("/settings/download-logs")
+def download_chat_history():
+    """Export every conversation the signed-in user has as a Markdown file."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    conversations = get_supabase_service().fetch_all_conversations_with_messages(user_client)
+    content = _render_conversations_as_markdown(conversations)
+
+    response = current_app.response_class(content, mimetype="text/markdown")
+    response.headers["Content-Disposition"] = "attachment; filename=nyc-tenant-assistant-chat-history.md"
+    return response
+
+
+def _render_conversations_as_markdown(conversations: list[dict]) -> str:
+    """Turn a list of conversations (each with a "messages" list) into one Markdown document."""
+
+    lines = ["# NYC Tenant Assistant -- Chat History Export", ""]
+
+    if not conversations:
+        lines.append("_No conversations yet._")
+
+    for conversation in conversations:
+        lines.append(f"## {conversation.get('title') or 'Untitled conversation'}")
+        lines.append(f"_Conversation ID: {conversation['id']} -- created {conversation.get('created_at', 'unknown')}_")
+        lines.append("")
+        for message in conversation.get("messages", []):
+            speaker = "You" if message.get("role") == "user" else "Assistant"
+            lines.append(f"**{speaker}:** {message.get('content', '')}")
+            lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 @main_bp.route("/logout")

@@ -4,22 +4,91 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NYC Tenant Assistant | Chat</title>
+  <script>
+    // Applied before first paint so switching pages (or a fresh load) never
+    // flashes the wrong theme. Reads the choice settings.html writes to
+    // localStorage; "system" (or no choice yet) falls through to the
+    // prefers-color-scheme media query below instead of setting an
+    // attribute at all.
+    (function () {
+      var saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    })();
+  </script>
   <style>
+    /* Same tokens as login.html/signup.html -- one warm, light palette with
+       a single accent color reused everywhere, instead of the previous
+       dark, ChatGPT-styled multi-gray theme. Keep these three files' :root
+       blocks in sync if the palette ever changes.
+
+       Dark mode is layered on top of the same tokens: an explicit choice
+       from settings.html sets data-theme on <html> (handled by the inline
+       script above, and it wins in both directions here); with no explicit
+       choice, prefers-color-scheme decides. */
     :root {
+      /* A formal, government-adjacent palette (cool neutrals + a single
+         civic blue) rather than the earlier warm terracotta scheme --
+         closer in register to nyc.gov/ny.gov without copying their exact
+         colors, so the app still reads as its own product. */
+      color-scheme: light;
+      --bg: #eef1f5;
+      --surface: #ffffff;
+      --border: #d7dde5;
+      --text: #1c2733;
+      --muted: #5b6b7c;
+      --accent: #1c5d8c;
+      --accent-hover: #164a70;
+      --accent-tint: #dce8f2;
+      --warning: #8a5a1f;
+      --warning-tint: #f7ecd9;
+      --error: #a3312a;
+      --error-tint: #fbe9e7;
+      --success: #1b7f3b;
+      --success-tint: #e6f4ea;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --bg: #101820;
+        --surface: #16212c;
+        --border: #2a3846;
+        --text: #e8edf2;
+        --muted: #93a3b3;
+        --accent: #5b9bd5;
+        --accent-hover: #7db2e0;
+        --accent-tint: #1f3547;
+        --warning: #e8c27a;
+        --warning-tint: #3a2f18;
+        --error: #e28a83;
+        --error-tint: #3a2320;
+        --success: #7fcf9b;
+        --success-tint: #1f3327;
+      }
+    }
+    :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #202123;
-      --panel: #343541;
-      --panel-alt: #444654;
-      --border: #4b4d5d;
-      --text: #ececf1;
-      --muted: #acacbe;
-      --accent: #10a37f;
+      --bg: #101820;
+      --surface: #16212c;
+      --border: #2a3846;
+      --text: #e8edf2;
+      --muted: #93a3b3;
+      --accent: #5b9bd5;
+      --accent-hover: #7db2e0;
+      --accent-tint: #1f3547;
+      --warning: #e8c27a;
+      --warning-tint: #3a2f18;
+      --error: #e28a83;
+      --error-tint: #3a2320;
+      --success: #7fcf9b;
+      --success-tint: #1f3327;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       height: 100vh;
-      font-family: Inter, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
       display: flex;
@@ -29,26 +98,75 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 16px 20px;
+      padding: 14px 20px;
       border-bottom: 1px solid var(--border);
-      background: #2b2c32;
+      background: var(--surface);
     }
-    .meta { color: var(--muted); font-size: 14px; }
+    header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+    .meta { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+    header a { color: var(--muted); font-size: 13px; text-decoration: none; }
+    header a:hover { color: var(--accent); }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .ref-links {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-right: 18px;
+      border-right: 1px solid var(--border);
+    }
+    .ref-links span.label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .ref-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--accent-tint);
+      color: var(--accent-hover);
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .ref-link:hover { background: var(--accent); color: #fff; }
+    @media (max-width: 700px) {
+      .ref-links span.label { display: none; }
+    }
+
     .layout {
       flex: 1;
       display: flex;
       min-height: 0;
     }
     .sidebar {
-      width: 260px;
+      width: 250px;
       flex-shrink: 0;
       border-right: 1px solid var(--border);
-      background: #202123;
-      padding: 16px;
-      overflow-y: auto;
+      background: var(--surface);
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      min-height: 0;
+    }
+    /* Everything except the account footer scrolls; the footer stays
+       pinned at the bottom regardless of how many conversations there are. */
+    .sidebar-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
     }
     .new-chat-form {
       display: flex;
@@ -59,9 +177,15 @@
       padding: 8px 10px;
       border-radius: 8px;
       border: 1px solid var(--border);
-      background: #40414f;
+      background: var(--bg);
       color: var(--text);
       font: inherit;
+      font-size: 13px;
+    }
+    .new-chat-form input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-tint);
     }
     .new-chat-form button {
       border: 0;
@@ -69,28 +193,76 @@
       background: var(--accent);
       color: #fff;
       font-weight: 600;
+      font-size: 13px;
       cursor: pointer;
       padding: 8px 10px;
     }
+    .new-chat-form button:hover { background: var(--accent-hover); }
     .conversation-list {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 2px;
     }
+    .conversation-row {
+      display: flex;
+      align-items: stretch;
+      border-radius: 8px;
+    }
+    .conversation-row:hover, .conversation-row:focus-within { background: var(--bg); }
+    .conversation-row.active { background: var(--accent-tint); }
     .conversation-link {
+      flex: 1;
+      min-width: 0;
       display: block;
       padding: 8px 10px;
-      border-radius: 8px;
       color: var(--text);
       text-decoration: none;
-      font-size: 14px;
+      font-size: 13px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .conversation-link:hover { background: var(--panel-alt); }
-    .conversation-link.active { background: var(--panel); border: 1px solid var(--border); }
-    .empty-hint { color: var(--muted); font-size: 13px; }
+    .conversation-row.active .conversation-link { color: var(--accent-hover); font-weight: 600; }
+    /* Archive/delete stay out of the way until the row is hovered or
+       keyboard-focused, so the list reads as plain conversation titles by
+       default instead of a row of buttons. */
+    .conversation-actions {
+      display: none;
+      align-items: center;
+      gap: 2px;
+      padding-right: 6px;
+      flex-shrink: 0;
+    }
+    .conversation-row:hover .conversation-actions,
+    .conversation-row:focus-within .conversation-actions {
+      display: flex;
+    }
+    .icon-btn {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+      padding: 5px 6px;
+      border-radius: 6px;
+    }
+    .icon-btn:hover { background: var(--border); color: var(--text); }
+    .empty-hint { color: var(--muted); font-size: 13px; margin: 0; }
+
+    .archived-section { font-size: 13px; color: var(--muted); }
+    .archived-section summary {
+      cursor: pointer;
+      padding: 4px 2px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .archived-section summary:hover { color: var(--text); }
+    .archived-section .conversation-list { margin-top: 6px; }
+    .conversation-row.archived .conversation-link { color: var(--muted); }
+
     .chat-area {
       flex: 1;
       display: flex;
@@ -100,73 +272,209 @@
     main {
       flex: 1;
       overflow-y: auto;
-      padding: 20px;
     }
     main.empty-state {
       display: flex;
       align-items: center;
       justify-content: center;
       color: var(--muted);
+      font-size: 14px;
     }
-    #chat-box {
-      width: min(900px, 100%);
-      margin: 0 auto;
+    .greeting-block { max-width: 480px; padding: 0 20px; text-align: center; }
+    .greeting-eyebrow { margin: 0 0 6px; color: var(--muted); font-size: 13px; min-height: 16px; }
+    .greeting-title { margin: 0 0 10px; font-size: 26px; font-weight: 600; color: var(--text); }
+    .greeting-sub { margin: 0 0 22px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .suggestion-chip {
       border: 1px solid var(--border);
-      border-radius: 12px;
-      background: #2d2f39;
-      min-height: calc(100% - 4px);
-      padding: 14px;
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
     }
-    .message {
-      border-radius: 10px;
-      padding: 12px 14px;
-      line-height: 1.45;
-      margin-bottom: 10px;
+    .suggestion-chip:hover { border-color: var(--accent); color: var(--accent-hover); }
+
+    /* Bottom-left account control: identity + a popup with Settings/Log
+       out (and room for more later), instead of header links. */
+    .sidebar-footer {
+      flex-shrink: 0;
+      border-top: 1px solid var(--border);
+      padding: 8px;
+      position: relative;
+    }
+    .user-menu-trigger {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border-radius: 8px;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .user-menu-trigger:hover, .user-menu-trigger[aria-expanded="true"] { background: var(--bg); }
+    .user-avatar {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .user-menu-trigger .user-email {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .user-menu-trigger .chevron { color: var(--muted); font-size: 10px; }
+    .user-menu {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: calc(100% + 6px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .user-menu a, .user-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      text-decoration: none;
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .user-menu a:hover, .user-menu button:hover { background: var(--bg); }
+
+    /* No boxed "chat panel" -- messages flow directly on the page
+       background, the way a normal chat client reads, rather than living
+       inside a bordered card. */
+    #chat-box {
+      width: min(720px, 100%);
+      margin: 0 auto;
+      padding: 24px 20px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .message { display: flex; flex-direction: column; gap: 4px; }
+    .message .label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    /* Assistant turns are plain text on the page background -- no box, no
+       border -- which is most of what makes this read as a normal chat
+       client instead of a UI kit demo. */
+    .message.assistant .bubble {
+      color: var(--text);
+      line-height: 1.6;
       white-space: pre-wrap;
     }
-    .message.user { background: var(--panel-alt); }
-    .message.assistant { background: var(--panel); border: 1px solid var(--border); }
-    .label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; }
+    /* User turns get a single light, single-color tint so the two roles
+       stay easy to tell apart at a glance without adding more colors. */
+    .message.user { align-items: flex-end; }
+    .message.user .label { padding-right: 2px; }
+    .message.user .bubble {
+      background: var(--accent-tint);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      max-width: 80%;
+    }
+
     form#chat-form {
-      width: min(900px, 100%);
+      width: min(720px, 100%);
       margin: 0 auto;
-      padding: 14px 20px 20px;
+      padding: 12px 20px 20px;
       display: flex;
       gap: 10px;
+      align-items: flex-end;
     }
     textarea {
       flex: 1;
       resize: vertical;
-      min-height: 54px;
+      min-height: 48px;
       max-height: 180px;
-      padding: 12px;
-      border-radius: 10px;
+      padding: 12px 14px;
+      border-radius: 6px;
       border: 1px solid var(--border);
-      background: #40414f;
+      background: var(--surface);
       color: var(--text);
       font: inherit;
+      font-size: 14px;
+    }
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-tint);
     }
     button {
-      min-width: 90px;
+      min-width: 76px;
+      height: 44px;
       border: 0;
-      border-radius: 10px;
+      border-radius: 6px;
       background: var(--accent);
       color: #fff;
       font-weight: 600;
+      font-size: 14px;
       cursor: pointer;
       padding: 0 16px;
+      font-family: inherit;
     }
-    button:disabled { opacity: .65; cursor: not-allowed; }
+    button:hover { background: var(--accent-hover); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+
     .warning {
-      margin: 0 auto;
-      width: min(900px, calc(100% - 40px));
-      background: #5f3b14;
-      color: #ffdfb2;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid #775126;
+      margin: 12px auto 0;
+      width: min(720px, calc(100% - 40px));
+      background: var(--warning-tint);
+      color: var(--warning);
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
     }
-    a { color: #9cdcff; }
+    /* Flash messages from redirects (archive/delete/etc. all flash() and
+       redirect back here) -- chat.html previously never rendered these at
+       all, so those confirmations and errors went nowhere. */
+    .flash {
+      margin: 12px auto 0;
+      width: min(720px, calc(100% - 40px));
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .flash.success { background: var(--success-tint); color: var(--success); }
+    .flash.error { background: var(--error-tint); color: var(--error); }
+    a { color: var(--accent); }
     .sr-only {
       position: absolute;
       width: 1px;
@@ -177,12 +485,20 @@
       clip: rect(0, 0, 0, 0);
       border: 0;
     }
+
+    /* Below 700px the sidebar becomes a short horizontal strip instead of a
+       column, so the chat itself keeps most of the screen on a phone. */
     @media (max-width: 700px) {
+      header { flex-wrap: wrap; gap: 8px; }
+      .header-actions { flex-wrap: wrap; gap: 10px; }
+      .ref-links { padding-right: 0; border-right: 0; gap: 6px; }
       .layout { flex-direction: column; }
       .sidebar {
         width: auto;
         border-right: 0;
         border-bottom: 1px solid var(--border);
+      }
+      .sidebar-scroll {
         padding: 12px 14px;
         gap: 10px;
         overflow-y: visible;
@@ -196,51 +512,124 @@
         overflow-x: auto;
         padding-bottom: 2px;
       }
-      .conversation-link {
+      .conversation-row {
         flex: 0 0 auto;
         max-width: 60vw;
-        padding: 7px 12px;
-        font-size: 13px;
         border: 1px solid var(--border);
-        background: var(--panel);
+        background: var(--surface);
       }
-      .conversation-link.active { border-color: var(--accent); }
+      .conversation-row.active { border-color: var(--accent); }
+      .conversation-link { padding: 7px 12px; }
+      /* Archive/delete need a free hand to tap, which a cramped horizontal
+         chip strip doesn't have room for -- available from the Archived
+         section's own row on desktop, or via the conversation itself once
+         opened, on mobile. */
+      .conversation-actions { display: none !important; }
+      .archived-section { display: none; }
       .chat-area { min-height: 0; }
-      main { padding: 14px; }
+      #chat-box { padding: 14px 14px 8px; }
       form#chat-form { padding: 10px 14px 14px; }
+      .greeting-title { font-size: 22px; }
     }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1 style="margin:0;font-size:20px;">NYC Tenant Assistant</h1>
-      <p class="meta">Logged in as <strong>{{ user_email }}</strong></p>
+      <h1>NYC Tenant Assistant</h1>
     </div>
-    <a href="{{ url_for('main.logout') }}">Log out</a>
+    <div class="header-actions">
+      <!-- Official reference sites, not app pages -- open in a new tab so a
+           tenant doesn't lose their conversation while looking something up.
+           Account actions (Settings/Log out) moved to the sidebar footer
+           user menu below, so the header stays just the brand + references. -->
+      <div class="ref-links">
+        <span class="label">Official sources</span>
+        <a class="ref-link" href="https://www.nyc.gov/site/hpd/index.page" target="_blank" rel="noopener noreferrer">NYC HPD</a>
+        <a class="ref-link" href="https://hcr.ny.gov/" target="_blank" rel="noopener noreferrer">NY State HCR</a>
+      </div>
+    </div>
   </header>
 
   {% if not ai_ready %}
     <p class="warning">GEMINI_API_KEY is not configured, so AI replies are currently disabled.</p>
   {% endif %}
 
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <p class="flash {{ category }}">{{ message }}</p>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
   <div class="layout">
     <aside class="sidebar">
-      <form class="new-chat-form" method="POST" action="{{ url_for('main.create_conversation') }}">
-        <input type="text" name="title" placeholder="New chat name (optional)">
-        <button type="submit">+ New chat</button>
-      </form>
+      <div class="sidebar-scroll">
+        <form class="new-chat-form" method="POST" action="{{ url_for('main.create_conversation') }}">
+          <input type="text" name="title" placeholder="New chat name (optional)">
+          <button type="submit">+ New chat</button>
+        </form>
 
-      <nav class="conversation-list">
-        {% for conversation in conversations %}
-          <a
-            class="conversation-link {% if conversation.id == active_conversation_id %}active{% endif %}"
-            href="{{ url_for('main.chat', conversation_id=conversation.id) }}"
-          >{{ conversation.title or "Untitled conversation" }}</a>
-        {% else %}
-          <p class="empty-hint">No conversations yet.</p>
-        {% endfor %}
-      </nav>
+        <nav class="conversation-list">
+          {% for conversation in conversations %}
+            <div class="conversation-row {% if conversation.id == active_conversation_id %}active{% endif %}">
+              <a
+                class="conversation-link"
+                href="{{ url_for('main.chat', conversation_id=conversation.id) }}"
+              >{{ conversation.title or "Untitled conversation" }}</a>
+              <div class="conversation-actions">
+                <form method="POST" action="{{ url_for('main.archive_conversation', conversation_id=conversation.id) }}">
+                  <button type="submit" class="icon-btn" title="Archive conversation" aria-label="Archive conversation">&#128451;</button>
+                </form>
+                <form method="POST" action="{{ url_for('main.delete_conversation', conversation_id=conversation.id) }}" onsubmit="return confirm('Delete this conversation and all of its messages? This cannot be undone.');">
+                  <button type="submit" class="icon-btn" title="Delete conversation" aria-label="Delete conversation">&#128465;</button>
+                </form>
+              </div>
+            </div>
+          {% else %}
+            <p class="empty-hint">No conversations yet.</p>
+          {% endfor %}
+        </nav>
+
+        {% if archived_conversations %}
+          <details class="archived-section">
+            <summary>Archived ({{ archived_conversations|length }})</summary>
+            <div class="conversation-list">
+              {% for conversation in archived_conversations %}
+                <div class="conversation-row archived {% if conversation.id == active_conversation_id %}active{% endif %}">
+                  <a
+                    class="conversation-link"
+                    href="{{ url_for('main.chat', conversation_id=conversation.id) }}"
+                  >{{ conversation.title or "Untitled conversation" }}</a>
+                  <div class="conversation-actions">
+                    <form method="POST" action="{{ url_for('main.unarchive_conversation', conversation_id=conversation.id) }}">
+                      <button type="submit" class="icon-btn" title="Restore conversation" aria-label="Restore conversation">&#8617;</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('main.delete_conversation', conversation_id=conversation.id) }}" onsubmit="return confirm('Delete this conversation and all of its messages? This cannot be undone.');">
+                      <button type="submit" class="icon-btn" title="Delete conversation" aria-label="Delete conversation">&#128465;</button>
+                    </form>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </details>
+        {% endif %}
+      </div>
+
+      <!-- Bottom-left account menu, Claude-desktop-style: identity + Settings/Log
+           out live behind one control instead of cluttering the header. -->
+      <div class="sidebar-footer">
+        <button type="button" class="user-menu-trigger" id="user-menu-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu">
+          <span class="user-avatar" aria-hidden="true">{{ (user_email or "?")[0]|upper }}</span>
+          <span class="user-email">{{ user_email }}</span>
+          <span class="chevron" aria-hidden="true">&#9650;</span>
+        </button>
+        <div class="user-menu" id="user-menu" role="menu" hidden>
+          <a href="{{ url_for('main.settings') }}" role="menuitem">Settings</a>
+          <a href="{{ url_for('main.logout') }}" role="menuitem">Log out</a>
+        </div>
+      </div>
     </aside>
 
     <div class="chat-area">
@@ -250,7 +639,7 @@
             {% for message in messages %}
               <div class="message {{ message.role }}">
                 <span class="label">{{ "You" if message.role == "user" else "Assistant" }}</span>
-                <div>{{ message.content }}</div>
+                <div class="bubble">{{ message.content }}</div>
               </div>
             {% endfor %}
           </div>
@@ -263,7 +652,30 @@
         </form>
       {% else %}
         <main class="empty-state">
-          <p>Start a new chat on the left to begin.</p>
+          <!-- Rendered once with a plain, timezone-agnostic fallback so it's
+               never blank before JS runs; the script below immediately
+               replaces it with a real time-of-day greeting in the visitor's
+               own local time (the server doesn't know that; the browser
+               does), the way this is done client-side almost everywhere. -->
+          <div class="greeting-block">
+            <p class="greeting-eyebrow" id="greeting-date"></p>
+            <h1 class="greeting-title" id="greeting-text">Welcome{% if user_email %}, {{ user_email.split("@")[0]|capitalize }}{% endif %}</h1>
+            <p class="greeting-sub">Ask about repairs, evictions, deposits, or anything else about your tenancy in NYC -- or pick up a previous conversation on the left.</p>
+            <div class="suggestions">
+              <form method="POST" action="{{ url_for('main.create_conversation') }}">
+                <input type="hidden" name="title" value="Repairs and heat">
+                <button type="submit" class="suggestion-chip">My landlord won't fix something</button>
+              </form>
+              <form method="POST" action="{{ url_for('main.create_conversation') }}">
+                <input type="hidden" name="title" value="Eviction notice">
+                <button type="submit" class="suggestion-chip">I got an eviction notice</button>
+              </form>
+              <form method="POST" action="{{ url_for('main.create_conversation') }}">
+                <input type="hidden" name="title" value="Security deposit">
+                <button type="submit" class="suggestion-chip">Security deposit question</button>
+              </form>
+            </div>
+          </div>
         </main>
       {% endif %}
     </div>
@@ -276,6 +688,78 @@
     if (chatBox) {
       chatBox.scrollTop = chatBox.scrollHeight;
     }
+
+    // Bottom-left account menu: click the identity button to open/close a
+    // small popup with Settings/Log out, close it on an outside click or
+    // Escape, and keep aria-expanded in sync for screen readers.
+    (function () {
+      const trigger = document.getElementById("user-menu-trigger");
+      const menu = document.getElementById("user-menu");
+      if (!trigger || !menu) return;
+
+      function closeMenu() {
+        menu.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+      }
+
+      function openMenu() {
+        menu.hidden = false;
+        trigger.setAttribute("aria-expanded", "true");
+      }
+
+      trigger.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (menu.hidden) {
+          openMenu();
+        } else {
+          closeMenu();
+        }
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!menu.hidden && !menu.contains(event.target) && event.target !== trigger) {
+          closeMenu();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !menu.hidden) {
+          closeMenu();
+          trigger.focus();
+        }
+      });
+    })();
+
+    // Dynamic, time-of-day greeting on the landing/empty-state view. Uses
+    // the visitor's own local clock (the server has no way to know that),
+    // so this only runs client-side -- the Jinja-rendered fallback above
+    // covers the no-JS/before-hydration case.
+    (function () {
+      const greetingText = document.getElementById("greeting-text");
+      const greetingDate = document.getElementById("greeting-date");
+      if (!greetingText) return;
+
+      const name = {{ (user_email.split("@")[0] if user_email else "")|tojson }};
+      const capitalizedName = name ? name.charAt(0).toUpperCase() + name.slice(1) : "";
+
+      const hour = new Date().getHours();
+      let timeGreeting;
+      if (hour < 5) timeGreeting = "Working late";
+      else if (hour < 12) timeGreeting = "Good morning";
+      else if (hour < 17) timeGreeting = "Good afternoon";
+      else if (hour < 21) timeGreeting = "Good evening";
+      else timeGreeting = "Good evening";
+
+      greetingText.textContent = capitalizedName ? `${timeGreeting}, ${capitalizedName}` : timeGreeting;
+
+      if (greetingDate) {
+        greetingDate.textContent = new Date().toLocaleDateString(undefined, {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+        });
+      }
+    })();
 
     if (chatForm) {
       const messageInput = document.getElementById("message-input");
@@ -291,6 +775,7 @@
         label.textContent = role === "user" ? "You" : "Assistant";
 
         const body = document.createElement("div");
+        body.className = "bubble";
         body.textContent = content;
 
         wrapper.appendChild(label);
