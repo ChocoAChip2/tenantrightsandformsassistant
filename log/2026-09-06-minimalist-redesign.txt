@@ -132,3 +132,30 @@ Deliberately not done:
   if per-chat export turns out to be what's wanted.
 - Did not resolve the mobile-layout branch overlap noted above; that's a
   merge-time concern for whichever branch lands second.
+
+Merge with origin/main (same day, same branch)
+
+- Merged in fix/chat/mobile-layout (already on main via PR #11 by the time
+  this branch caught up), the new intake-clerk system prompt in
+  ai_service.py, form_service.py (PDF form filling), and routes.py's
+  chat_message handling of the completion JSON -> PDF download, plus the
+  client-side blob-download JS Choco added to chat.html for that response.
+- The only real conflict was the @media (max-width: 700px) block, exactly
+  as flagged when this branch was created: resolved by keeping this
+  branch's selectors/tokens (var(--surface), #chat-box padding, the
+  header-actions/ref-links wrapping rules) since main's version used the
+  old dark theme's variable names (var(--panel)) and markup structure
+  (no #chat-box wrapper) that no longer exist here. No loss of behavior --
+  same breakpoint, same layout logic, just targeting this branch's markup.
+- routes.py and supabase_service.py merged with no conflicts (this
+  branch's settings routes/methods sit in different functions than main's
+  intake/PDF-download changes).
+- Did NOT fix the known bug where routes.py's FormService.fill_tenant_form
+  call still points at "templates/RA-81.pdf" while the file actually in
+  the repo is "templates/ra-81-fillable.pdf" (case- and name-mismatched --
+  will throw on a case-sensitive filesystem the moment a user completes
+  the intake flow). That's Choco's in-progress feature, not something this
+  branch touches; flagging again here since the merge carries it forward
+  unchanged.
+- All 21 tests still pass after the merge (pypdf/gunicorn from main's
+  requirements.txt installed to run them locally).

@@ -472,10 +472,25 @@
             body: JSON.stringify({ conversation_id: conversationId, content: text })
           });
 
-          const payload = await response.json();
-          if (!response.ok) throw new Error(payload.error || "Request failed.");
+          const contentType = response.headers.get("content-type");
 
-          renderMessage("assistant", payload.reply);
+          if (contentType && contentType.includes("application/pdf")) {
+            const blob = await response.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.download = "NYC_Tenant_Complaint.pdf";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            renderMessage("assistant", "System: Your form is complete and downloading now!");
+          } else {
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || "Request failed.");
+            renderMessage("assistant", payload.reply);
+          }
         } catch (error) {
           renderMessage("assistant", "Sorry, I couldn’t get a response right now. Please try again.");
         } finally {
