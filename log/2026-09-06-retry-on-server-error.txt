@@ -1,0 +1,76 @@
+Deployment Summary — Retry Gemini 503s instead of failing on the first one
+Date: 2026-09-06
+
+Requirement (from conversation, not BRANCH-PLAN.md): the user reported the
+chat page showing "Sorry, I couldn't get a response right now" and traced
+it to 503 Service Unavailable entries in the Gemini API usage dashboard.
+Asked to look into why.
+
+Root cause found in ai_service.py: AIService.generate_reply loops over
+FALLBACK_MODELS and only ever catches ClientError. Gemini's SDK
+(google.genai.errors) raises a 503 as ServerError, a *different* class
+that is not a ClientError and inherits from the same APIError base as a
+sibling, not a subclass -- so `except ClientError` never matches it. The
+very first transient 503 (common on the free tier under load) skipped the
+fallback-model retry loop entirely, propagated straight up through
+routes.py's generic `except Exception` handler, and the frontend showed
+its generic failure message. The fallback list existed but only ever
+protected against "this model doesn't exist for this API key" (404),
+never against "Gemini is temporarily overloaded" (503) -- which is what
+was actually happening.
+
+Change shipped (branch fix/ai/retry-on-server-error, built on top of the
+already-fixed fix/chat/ra81-template-filename branch since both are small
+independent bug fixes off main):
+
+- ai_service.py: generate_reply now also catches ServerError. On a
+  ServerError it retries the *same* model once after a short delay
+  (_SERVER_ERROR_RETRIES_PER_MODEL = 1, _SERVER_ERROR_RETRY_DELAY_SECONDS
+  = 1.5) before moving on to the next fallback model -- so a single
+  transient overload gets a real chance to clear (retry) and, failing
+  that, a different model gets tried (fallback), instead of failing
+  outright on attempt one. ClientError 404 handling is unchanged: still
+  skips straight to the next model with no retry, since retrying a model
+  that doesn't exist for this API key can't ever succeed. A non-404
+  ClientError (bad request, auth, etc.) still raises immediately,
+  unchanged -- retrying a genuinely bad request is pointless. Final
+  failure message changed from "No supported Gemini model is available
+  for this API key" (which was misleading for this case -- the model
+  exists, it's just overloaded) to "Gemini is temporarily unavailable
+  after retrying <models>".
+- This does NOT change what the user sees in the chat UI: chat.html's
+  fetch handler already shows a fixed "Sorry, I couldn't get a response
+  right now" message for any failed request regardless of the server's
+  error text, and routes.py's chat_message still turns any RuntimeError
+  into a JSON error response. What changes is how often that failure
+  message appears at all -- most single 503s should now be absorbed by
+  the retry/fallback instead of surfacing to the user.
+- tests/test_ai_service_retry.py (new, 5 tests): drives
+  AIService.generate_reply directly against a mocked genai.Client so no
+  real Gemini call or real time.sleep delay happens (time.sleep is
+  mocked). Covers: retry-then-succeed on the same model, exhaust retries
+  on the first model then succeed on the fallback model, exhaust every
+  model and retry and raise RuntimeError, 404 still skips to the next
+  model without wasting a retry on it, and a non-404 ClientError still
+  raises immediately without retrying.
+
+Verified locally:
+- `python -m unittest discover -s tests` -- 8/8 pass (this branch also
+  carries the RA-81 template-path fix and its 3 tests from the branch it
+  was built on).
+
+Deliberately not done:
+- Did not add retry/backoff for network-level failures (timeouts,
+  connection errors) -- only Gemini's own ServerError is retried here,
+  since that's the specific, evidenced cause (503s visible in the Gemini
+  usage dashboard). Broader network resiliency would be a separate,
+  larger change.
+- Did not make the retry count/delay configurable via an environment
+  variable -- two small module-level constants felt like enough for a
+  first pass; can be promoted to config.py later if tuning turns out to
+  be needed.
+- Did not change chat.html's or routes.py's error messaging -- this is
+  purely about giving Gemini itself more chances to succeed before
+  failing, not about what the user sees when it still fails after that.
+- Did not touch the intake system prompt, form_service.py, or anything
+  else in ai_service.py/routes.py beyond the retry loop.
