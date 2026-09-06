@@ -2,3 +2,4 @@ supabase
 Flask
 google-genai
 gunicorn
+pypdf
