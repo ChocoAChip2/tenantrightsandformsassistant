@@ -66,8 +66,16 @@ def signup():
             return render_template("signup.html")
 
         try:
-            # Ask Supabase to create the account, then send the user to login.
-            supabase_service.sign_up(email=email, password=password)
+            # Ask Supabase to create the account. sign_up() returns False
+            # instead of raising when the email is already registered, since
+            # Supabase itself won't always tell us that directly (see the
+            # docstring in supabase_service.py) -- either way, we must not
+            # tell the visitor to "check your email" for an account that
+            # already exists and never got a new confirmation email.
+            created = supabase_service.sign_up(email=email, password=password)
+            if not created:
+                return render_template("signup.html", existing_account_email=email)
+
             flash(
                 "Sign-up successful. Please confirm your email, then log in.",
                 "success",
