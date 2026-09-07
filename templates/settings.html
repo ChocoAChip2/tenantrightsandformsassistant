@@ -1,13 +1,12 @@
 <!doctype html>
+{# Frontend rationale lives in docs/frontend/ -- this file intentionally carries no HTML/CSS/JS comments, because they would be served to anyone who opens View Source. Jinja comments like this one are stripped before the response is written. Read docs/frontend/css-gotchas.md before deleting a CSS rule here you don't recognise. #}
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NYC Tenant Assistant | Settings</title>
   <script>
-    // Same no-flash pattern as chat.html: apply a saved explicit choice
-    // before first paint. "system" (or no choice yet) leaves no attribute
-    // set, so the prefers-color-scheme block below decides instead.
+
     (function () {
       var saved = localStorage.getItem("theme");
       if (saved === "light" || saved === "dark") {
@@ -16,12 +15,9 @@
     })();
   </script>
   <style>
-    /* Same token values as chat.html/login.html/signup.html -- keep these
-       :root blocks in sync across all four files if the palette changes. */
+
     :root {
-      /* Same formal, government-adjacent palette as chat.html -- cool
-         neutrals + a single civic blue accent instead of warm terracotta.
-         Keep these :root blocks in sync across both files. */
+
       color-scheme: light;
       --bg: #eef1f5;
       --surface: #ffffff;
@@ -75,16 +71,7 @@
       --success-tint: #1f3327;
     }
     * { box-sizing: border-box; }
-    /* The delete-account confirmation form and its trigger button both
-       carry the native `hidden` attribute, and both are also targeted by
-       author rules that set `display` (`form.stack { display: grid }`,
-       `button { display: inline-flex }`). An author `display` rule always
-       beats the browser's built-in `[hidden] { display: none }` default
-       regardless of specificity, so without this line the "are you sure"
-       form would render permanently open next to the button that's
-       supposed to reveal it. This is the same cascade bug that shipped the
-       reset-password form visible on an invalid link -- see
-       log/2026-09-07-sidebar-menu-reorg-and-ux.txt. */
+
     [hidden] { display: none !important; }
     body {
       margin: 0;
@@ -156,13 +143,7 @@
       font-size: 14px;
     }
     input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
-    /* Show/hide toggle, sitting inside the same box as the password input
-       rather than beside it. An inline SVG (stroke="currentColor") rather
-       than an emoji glyph -- an emoji renders as a fixed-color picture
-       regardless of CSS, so it looked identical (and not especially
-       legible) in both light and dark mode; this instead follows
-       .password-toggle's own `color`, which is a themed token like every
-       other icon-ish thing on the page. */
+
     .password-field { position: relative; }
     .password-field input[type="password"], .password-field input[type="text"] { padding-right: 42px; width: 100%; }
     .password-toggle {
@@ -217,15 +198,11 @@
     .notice.error { background: var(--error-tint); color: var(--error); }
     .notice.success { background: var(--success-tint); color: var(--success); }
 
-    /* Deleting an account is the only irreversible control on this page, so
-       it gets a border in the error color and destructive buttons that read
-       as destructive -- rather than looking identical to "Save account
-       changes" one card above it. */
     .danger-zone { border-color: var(--error); }
     .danger-zone h2 { color: var(--error); }
     button.danger { background: var(--error); }
     button.danger:hover { background: var(--error); filter: brightness(0.92); }
-    /* A disabled destructive button should not also look hoverable. */
+
     button.danger:disabled { background: var(--error); opacity: .5; }
     button.danger:disabled:hover { filter: none; }
     button.secondary-button {
@@ -317,9 +294,6 @@
       <a class="button secondary" href="{{ url_for('main.download_chat_history') }}">Download my chat history</a>
     </section>
 
-    <!-- Deleting an account is the one irreversible thing on this page, so
-         it sits in its own visually distinct section at the very bottom,
-         away from the controls people use routinely. -->
     <section class="card danger-zone">
       <h2>Delete account</h2>
       {% if pending_deletion %}
@@ -344,10 +318,6 @@
         </p>
         <button type="button" class="danger" id="delete-account-start">Delete my account</button>
 
-        <!-- Step two. Hidden until the button above is clicked, and every
-             field in it is re-checked server-side (see the
-             request_account_deletion route) -- this is a confirmation, not
-             the enforcement. -->
         <form class="stack delete-confirm" method="POST" action="{{ url_for('main.request_account_deletion') }}" id="delete-account-form" hidden>
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <p class="hint confirm-lead">To confirm, type your email address (<strong>{{ user_email }}</strong>) below.</p>
@@ -369,8 +339,7 @@
   </main>
 
   <script>
-    // Wire the theme radios up to the same localStorage key the inline
-    // pre-paint scripts on this page and chat.html read from.
+
     (function () {
       var radios = document.querySelectorAll('#theme-options input[type="radio"]');
       var current = localStorage.getItem("theme") || "system";
@@ -389,10 +358,6 @@
       });
     })();
 
-    // Show/hide toggle, shared with login.html/signup.html/
-    // reset_password.html. Inline SVGs rather than emoji so the icon's
-    // stroke color follows .password-toggle's own themed `color` (see the
-    // CSS comment above) instead of rendering as a fixed-color picture.
     var EYE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
     var EYE_OFF_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.8 21.8 0 0 1 5.06-6.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.8 21.8 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
     document.querySelectorAll(".password-toggle").forEach(function (btn) {
@@ -408,11 +373,6 @@
       });
     });
 
-    // Disable the submit button (and say what's happening) the instant the
-    // account-changes form is submitted, rather than leaving it clickable
-    // while the request is in flight.
-    // Selected by id, not "form.stack" -- the delete-account confirmation
-    // below is also a .stack form, and this handler must not claim it.
     document.getElementById("account-form").addEventListener("submit", function (event) {
       var btn = event.target.querySelector('button[type="submit"]');
       if (!btn || btn.disabled) return;
@@ -420,16 +380,10 @@
       btn.textContent = "Saving…";
     });
 
-    // Account deletion, step two. Clicking "Delete my account" doesn't
-    // delete anything -- it reveals this form, and the real submit button
-    // stays disabled until the typed email matches the signed-in address
-    // AND the acknowledgement is ticked. The route re-checks both, so this
-    // is purely about making the second confirmation deliberate rather
-    // than about enforcement.
     (function () {
       var startBtn = document.getElementById("delete-account-start");
       var form = document.getElementById("delete-account-form");
-      if (!startBtn || !form) return;  // not rendered when a deletion is already pending
+      if (!startBtn || !form) return;
 
       var emailInput = document.getElementById("confirm-email");
       var understoodBox = document.getElementById("confirm-understood");
@@ -469,8 +423,6 @@
       syncConfirmButton();
     })();
 
-    // Show the purge deadline in the visitor's own locale/timezone rather
-    // than the raw UTC date the server rendered as a fallback.
     (function () {
       var el = document.getElementById("purge-date");
       if (!el || !el.dataset.purgeAt) return;

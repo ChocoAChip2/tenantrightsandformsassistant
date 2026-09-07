@@ -76,6 +76,7 @@ from before this branch — errors only appear in logs.
 ├── wsgi.py               # WSGI entrypoint for Render/Gunicorn (imports app)
 ├── test.py               # Backward-compatible legacy entrypoint (imports app)
 ├── requirements.txt      # Python dependencies
+├── docs/frontend/        # Why the templates look the way they do (they carry no comments — see below)
 ├── tests/                # Unit tests (python -m unittest discover -s tests)
 ├── supabase/migrations/  # SQL applied to the Supabase project (account deletion + its pg_cron purge)
 ├── .github/workflows/

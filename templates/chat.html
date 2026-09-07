@@ -1,20 +1,14 @@
 <!doctype html>
+{# Frontend rationale lives in docs/frontend/ -- this file intentionally carries no HTML/CSS/JS comments, because they would be served to anyone who opens View Source. Jinja comments like this one are stripped before the response is written. Read docs/frontend/css-gotchas.md before deleting a CSS rule here you don't recognise. #}
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- Read by the chat-message script below into the X-CSRFToken header --
-       #chat-form sends its message via fetch()/JSON rather than a plain
-       form submit, so it has nowhere to put the hidden csrf_token field
-       every other POST form on this page carries instead. -->
+
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>NYC Tenant Assistant | Chat</title>
   <script>
-    // Applied before first paint so switching pages (or a fresh load) never
-    // flashes the wrong theme. Reads the choice settings.html writes to
-    // localStorage; "system" (or no choice yet) falls through to the
-    // prefers-color-scheme media query below instead of setting an
-    // attribute at all.
+
     (function () {
       var saved = localStorage.getItem("theme");
       if (saved === "light" || saved === "dark") {
@@ -23,20 +17,9 @@
     })();
   </script>
   <style>
-    /* Same tokens as login.html/signup.html -- one warm, light palette with
-       a single accent color reused everywhere, instead of the previous
-       dark, ChatGPT-styled multi-gray theme. Keep these three files' :root
-       blocks in sync if the palette ever changes.
 
-       Dark mode is layered on top of the same tokens: an explicit choice
-       from settings.html sets data-theme on <html> (handled by the inline
-       script above, and it wins in both directions here); with no explicit
-       choice, prefers-color-scheme decides. */
     :root {
-      /* A formal, government-adjacent palette (cool neutrals + a single
-         civic blue) rather than the earlier warm terracotta scheme --
-         closer in register to nyc.gov/ny.gov without copying their exact
-         colors, so the app still reads as its own product. */
+
       color-scheme: light;
       --bg: #eef1f5;
       --surface: #ffffff;
@@ -90,14 +73,7 @@
       --success-tint: #1f3327;
     }
     * { box-sizing: border-box; }
-    /* The user-menu popup below sets `display: flex` on the same element
-       that also carries the native `hidden` attribute -- an author rule
-       that sets `display` always wins over the browser's built-in
-       `[hidden] { display: none }` default, regardless of selector
-       specificity, so without this the menu rendered open on every page
-       load, not just after clicking its trigger. This one rule guarantees
-       `hidden` always actually hides, no matter what display value some
-       other class sets. */
+
     [hidden] { display: none !important; }
     body {
       margin: 0;
@@ -117,12 +93,7 @@
       background: var(--surface);
     }
     header h1 { margin: 0; font-size: 16px; font-weight: 600; }
-    /* The brand name doubles as a "go to the main chat page" link, the
-       same convention as clicking a logo on most sites -- styled to still
-       read as a plain title (inherits color, no underline) with just a
-       pointer cursor and a subtle hover tint as the only hint it's
-       clickable. header h1 a's extra specificity over header a below is
-       deliberate: without it, the generic nav-link color/size would win. */
+
     header h1 a { color: inherit; text-decoration: none; }
     header h1 a:hover { color: var(--accent); }
     .meta { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
@@ -179,8 +150,7 @@
       flex-direction: column;
       min-height: 0;
     }
-    /* Everything except the account footer scrolls; the footer stays
-       pinned at the bottom regardless of how many conversations there are. */
+
     .sidebar-scroll {
       flex: 1;
       min-height: 0;
@@ -194,20 +164,6 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
-    }
-    .new-chat-form input {
-      padding: 8px 10px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text);
-      font: inherit;
-      font-size: 13px;
-    }
-    .new-chat-form input:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-tint);
     }
     .new-chat-form button {
       border: 0;
@@ -246,9 +202,7 @@
       white-space: nowrap;
     }
     .conversation-row.active .conversation-link { color: var(--accent-hover); font-weight: 600; }
-    /* Swapped in for .conversation-link while a rename is in progress
-       (see the "Rename" row-menu item and its script below) -- same slot,
-       same sizing, so the row doesn't jump around when it toggles. */
+
     .rename-form { flex: 1; min-width: 0; display: flex; }
     .rename-form input {
       width: 100%;
@@ -266,12 +220,7 @@
       outline: none;
       box-shadow: 0 0 0 3px var(--accent-tint);
     }
-    /* Archive/Delete (Restore/Delete for an archived row) live behind a
-       single "..." trigger on the right of the row instead of two separate
-       buttons -- one consistent affordance per row instead of a row of
-       buttons to parse. The trigger stays out of the way until the row is
-       hovered/focused or its own menu is open, the same as the two
-       separate buttons it replaces used to. */
+
     .row-menu-trigger {
       display: none;
       align-items: center;
@@ -313,10 +262,7 @@
       gap: 2px;
     }
     .row-menu-panel form { margin: 0; }
-    /* Explicit min-width/height resets -- without them these buttons would
-       inherit the global button rule's min-width:76px/height:44px (sized
-       for the big Send/primary buttons), which is far too large for a
-       compact menu item and would make the panel look broken. */
+
     .row-menu-panel button {
       display: block;
       width: 100%;
@@ -372,10 +318,7 @@
     .greeting-title { margin: 0 0 10px; font-size: 26px; font-weight: 600; color: var(--text); }
     .greeting-sub { margin: 0 0 22px; color: var(--muted); font-size: 14px; line-height: 1.5; }
     .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-    /* Stronger at-rest border/shadow than the old near-invisible
-       var(--border) outline, and a real background fill on hover (not just
-       a subtle text-color shift) so it's obvious these are clickable and
-       obvious when one is being hovered. */
+
     .suggestion-chip {
       border: 1px solid var(--border);
       background: var(--surface);
@@ -396,18 +339,6 @@
       outline: none;
     }
 
-    /* Bottom-left account control: identity + a popup with Settings/Log
-       out (and room for more later), instead of header links.
-       column-reverse (rather than the popup being position:absolute) is
-       deliberate: the trigger button is the *first* element in the markup
-       and the popup the second, so with the row order reversed the trigger
-       still renders at the bottom and the popup opens directly above it,
-       but now genuinely in-flow. That means opening it grows this footer's
-       real height, and because .sidebar-scroll is the flex:1 sibling
-       sharing the same fixed-height column, the scroll area shrinks to
-       make room instead of the popup floating on top of it -- so Settings/
-       Log out can never cover the last conversation or an archived chat,
-       no matter how long the list is or how far it's scrolled. */
     .sidebar-footer {
       flex-shrink: 0;
       border-top: 1px solid var(--border);
@@ -463,12 +394,7 @@
       flex-direction: column;
       gap: 2px;
     }
-    /* The Log out control is a <form> (see the markup below, and the
-       /logout route's docstring for why) rather than a plain <a> --
-       display: contents drops the <form> itself out of layout so its
-       <button> sits directly among .user-menu's flex children, exactly
-       like the Settings link beside it, instead of the form adding its
-       own box and breaking the shared gap/alignment. */
+
     .user-menu form { display: contents; }
     .user-menu a, .user-menu button {
       display: block;
@@ -486,9 +412,6 @@
     }
     .user-menu a:hover, .user-menu button:hover { background: var(--bg); }
 
-    /* No boxed "chat panel" -- messages flow directly on the page
-       background, the way a normal chat client reads, rather than living
-       inside a bordered card. */
     #chat-box {
       width: min(720px, 100%);
       margin: 0 auto;
@@ -498,11 +421,7 @@
       gap: 18px;
     }
     .message { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-    /* Only messages added during this session animate in -- the class is
-       applied in renderMessage(), never rendered server-side. Animating
-       the whole history on page load would mean a long conversation
-       fluttering into place every time it's opened, which reads as busy
-       rather than polished. */
+
     .message.is-new { animation: message-in .22s ease-out both; }
     @keyframes message-in {
       from { opacity: 0; transform: translateY(6px); }
@@ -513,27 +432,15 @@
       font-weight: 600;
       color: var(--muted);
     }
-    /* white-space: pre-wrap only wraps at spaces/newlines -- a single long
-       unbroken run of characters (a long URL, a wall of no-space text, a
-       pasted token/hash) has no space to wrap at, so without
-       overflow-wrap it renders wider than the bubble and visually spills
-       out past its edge instead of staying inside it. overflow-wrap:
-       anywhere forces a break wherever needed as a last resort, and
-       min-width: 0 is required alongside it -- .bubble sits inside a flex
-       column (.message), and a flex item's default min-width is "auto"
-       (i.e. big enough to fit its content unbroken), which silently
-       overrides overflow-wrap and lets the same overflow happen anyway. */
+
     .bubble { min-width: 0; overflow-wrap: anywhere; }
-    /* Assistant turns are plain text on the page background -- no box, no
-       border -- which is most of what makes this read as a normal chat
-       client instead of a UI kit demo. */
+
     .message.assistant .bubble {
       color: var(--text);
       line-height: 1.6;
       white-space: pre-wrap;
     }
-    /* User turns get a single light, single-color tint so the two roles
-       stay easy to tell apart at a glance without adding more colors. */
+
     .message.user { align-items: flex-end; }
     .message.user .label { padding-right: 2px; }
     .message.user .bubble {
@@ -545,9 +452,7 @@
       white-space: pre-wrap;
       max-width: 80%;
     }
-    /* "Assistant is thinking" indicator shown while waiting on a reply --
-       three dots pulsing in sequence, the same pattern Claude/ChatGPT/Gemini
-       all use, so it reads as "working on it" rather than a stalled page. */
+
     .thinking-dots {
       display: inline-flex;
       gap: 4px;
@@ -573,10 +478,7 @@
       margin: 0 auto;
       padding: 12px 20px 20px;
       display: flex;
-      /* The pill border/shadow/radius live here (on the form itself, the
-         flex container for the textarea+button) rather than on a separate
-         wrapper div -- one less nesting level, and :focus-within below
-         still works exactly the same either way. */
+
       align-items: flex-end;
       gap: 6px;
       border: 1px solid var(--border);
@@ -590,11 +492,7 @@
     }
     textarea {
       flex: 1;
-      /* resize: none + the auto-grow script (see the chat-form script
-         block) is what replaces the browser's native drag-handle "corner
-         arrows" -- the box now grows itself as you type, up to
-         max-height, instead of staying a fixed size until manually
-         dragged. */
+
       resize: none;
       overflow-y: auto;
       min-height: 24px;
@@ -609,13 +507,7 @@
       line-height: 1.45;
     }
     textarea:focus { outline: none; }
-    /* #send-btn's id-selector specificity is what lets these override the
-       bare `button` rule elsewhere on the page (new-chat-form, suggestion
-       chips, etc.) without needing !important. A small circular icon
-       button sitting inside the same pill as the textarea, the same
-       "arrow in a circle" convention Claude/ChatGPT/Gemini all use,
-       instead of a separate rectangular "Send" button bolted on beside
-       the input. */
+
     #send-btn {
       flex-shrink: 0;
       align-self: flex-end;
@@ -639,12 +531,6 @@
     #send-btn:hover { background: var(--accent-hover); }
     #send-btn:disabled { opacity: .4; cursor: not-allowed; }
 
-    /* Live "used / allowed" counter under the composer. It uses
-       `visibility` rather than `hidden`/`display: none` so the line always
-       occupies its space -- the counter appearing at 80% of the cap then
-       doesn't shove the whole composer up by a line mid-sentence. Colors
-       escalate (muted -> warning -> error) as the cap gets close, so it
-       reads as information at 80% and as a limit at 100%. */
     .char-count {
       width: min(720px, 100%);
       margin: 0 auto;
@@ -658,22 +544,13 @@
     .char-count.near-limit { color: var(--warning); }
     .char-count.at-limit { color: var(--error); font-weight: 600; }
 
-    /* Small motion pass. Everything here is short (under a quarter of a
-       second) and tied to something the person just did -- the point is
-       that state changes read as movement rather than as the page
-       redrawing, not that anything is decorated. */
     .conversation-link, .row-menu-trigger, .suggestion-chip, .user-menu-trigger, #send-btn {
       transition: background-color .15s ease, color .15s ease, border-color .15s ease, transform .12s ease;
     }
-    /* A button that visibly gives when pressed feels physical; without it
-       a click has no feedback at all until the page responds. */
+
     #send-btn:active:not(:disabled) { transform: scale(0.92); }
     .suggestion-chip:active { transform: translateY(1px); }
 
-    /* Anyone who has asked their OS to reduce motion gets none of the
-       above. This is a real accessibility setting -- motion can trigger
-       nausea and vestibular symptoms -- not a preference to override
-       because the animation is tasteful. */
     @media (prefers-reduced-motion: reduce) {
       .message.is-new { animation: none; }
       .conversation-link, .row-menu-trigger, .suggestion-chip, .user-menu-trigger, #send-btn {
@@ -691,9 +568,7 @@
       border-radius: 6px;
       font-size: 13px;
     }
-    /* Flash messages from redirects (archive/delete/etc. all flash() and
-       redirect back here) -- chat.html previously never rendered these at
-       all, so those confirmations and errors went nowhere. */
+
     .flash {
       margin: 12px auto 0;
       width: min(720px, calc(100% - 40px));
@@ -715,8 +590,6 @@
       border: 0;
     }
 
-    /* Below 700px the sidebar becomes a short horizontal strip instead of a
-       column, so the chat itself keeps most of the screen on a phone. */
     @media (max-width: 700px) {
       header { flex-wrap: wrap; gap: 8px; }
       .header-actions { flex-wrap: wrap; gap: 10px; }
@@ -732,9 +605,7 @@
         gap: 10px;
         overflow-y: visible;
       }
-      .new-chat-form { flex-direction: row; }
-      .new-chat-form input { flex: 1; min-width: 0; }
-      .new-chat-form button { flex-shrink: 0; }
+      .new-chat-form button { flex: 1; }
       .conversation-list {
         flex-direction: row;
         gap: 8px;
@@ -749,10 +620,7 @@
       }
       .conversation-row.active { border-color: var(--accent); }
       .conversation-link { padding: 7px 12px; }
-      /* Archive/delete need a free hand to tap, which a cramped horizontal
-         chip strip doesn't have room for -- available from the Archived
-         section's own row on desktop, or via the conversation itself once
-         opened, on mobile. */
+
       .row-menu-trigger { display: none !important; }
       .archived-section { display: none; }
       .chat-area { min-height: 0; }
@@ -768,10 +636,7 @@
       <h1><a href="{{ url_for('main.chat') }}">NYC Tenant Assistant</a></h1>
     </div>
     <div class="header-actions">
-      <!-- Official reference sites, not app pages -- open in a new tab so a
-           tenant doesn't lose their conversation while looking something up.
-           Account actions (Settings/Log out) moved to the sidebar footer
-           user menu below, so the header stays just the brand + references. -->
+
       <div class="ref-links">
         <span class="label">Official sources</span>
         <a class="ref-link" href="https://www.nyc.gov/site/hpd/index.page" target="_blank" rel="noopener noreferrer">NYC HPD</a>
@@ -797,7 +662,6 @@
       <div class="sidebar-scroll">
         <form class="new-chat-form" method="POST" action="{{ url_for('main.create_conversation') }}" data-new-chat-form>
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="text" name="title" placeholder="New chat name (optional)">
           <button type="submit">+ New chat</button>
         </form>
 
@@ -863,8 +727,6 @@
         {% endif %}
       </div>
 
-      <!-- Bottom-left account menu, Claude-desktop-style: identity + Settings/Log
-           out live behind one control instead of cluttering the header. -->
       <div class="sidebar-footer">
         <button type="button" class="user-menu-trigger" id="user-menu-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu">
           <span class="user-avatar" aria-hidden="true">{{ (user_email or "?")[0]|upper }}</span>
@@ -873,9 +735,7 @@
         </button>
         <div class="user-menu" id="user-menu" role="menu" hidden>
           <a href="{{ url_for('main.settings') }}" role="menuitem">Settings</a>
-          <!-- POST, not a plain link -- see the docstring on the /logout
-               route for why (CSRF: a GET link can be triggered by any
-               embedded <img>, a POST form cannot). -->
+
           <form method="POST" action="{{ url_for('main.logout') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" role="menuitem">Log out</button>
@@ -902,16 +762,11 @@
           <textarea id="message-input" placeholder="Message NYC Tenant Assistant" maxlength="{{ max_message_length }}" required></textarea>
           <button id="send-btn" type="submit" aria-label="Send message" title="{% if not ai_ready %}Configure GEMINI_API_KEY to enable chat{% else %}Send message{% endif %}" {% if not ai_ready %}disabled{% endif %}>&#8593;</button>
         </form>
-        <!-- aria-live="polite" so a screen reader announces the count as it
-             starts mattering, rather than on every keystroke. -->
+
         <p class="char-count" id="char-count" aria-live="polite"></p>
       {% else %}
         <main class="empty-state">
-          <!-- Rendered once with a plain, timezone-agnostic fallback so it's
-               never blank before JS runs; the script below immediately
-               replaces it with a real time-of-day greeting in the visitor's
-               own local time (the server doesn't know that; the browser
-               does), the way this is done client-side almost everywhere. -->
+
           <div class="greeting-block">
             <p class="greeting-eyebrow" id="greeting-date"></p>
             <h1 class="greeting-title" id="greeting-text">Welcome{% if user_email %}, {{ user_email.split("@")[0]|capitalize }}{% endif %}</h1>
@@ -948,9 +803,6 @@
       chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    // Bottom-left account menu: click the identity button to open/close a
-    // small popup with Settings/Log out, close it on an outside click or
-    // Escape, and keep aria-expanded in sync for screen readers.
     (function () {
       const trigger = document.getElementById("user-menu-trigger");
       const menu = document.getElementById("user-menu");
@@ -989,11 +841,6 @@
       });
     })();
 
-    // Per-conversation "..." menu (Archive/Delete, or Restore/Delete for an
-    // archived row). One delegated handler covers every row instead of
-    // wiring up a listener per row, since the sidebar can have any number
-    // of conversations and archiving/deleting doesn't reload the page's
-    // script. Only one menu is ever open at a time.
     (function () {
       function closeMenu(trigger) {
         const panel = trigger.nextElementSibling;
@@ -1021,7 +868,7 @@
           }
           return;
         }
-        // Clicked outside every trigger/panel -- close whatever is open.
+
         if (!event.target.closest(".row-menu-panel")) {
           closeAllMenus(null);
         }
@@ -1032,13 +879,6 @@
       });
     })();
 
-    // Rename a conversation in place: either the "Rename" row-menu item or
-    // double-clicking the conversation's name swaps .conversation-link for
-    // the row's own .rename-form (a plain POST form, same as
-    // Archive/Delete -- no fetch/JSON needed), focuses its input, and
-    // Enter submits it normally. Escape or clicking/tabbing away cancels
-    // back to the link without saving anything, since this form only ever
-    // submits via Enter.
     (function () {
       function startRename(row) {
         if (!row) return;
@@ -1071,8 +911,6 @@
         const row = renameTrigger.closest(".conversation-row");
         if (!row) return;
 
-        // Close the "..." panel this button lives in before showing the
-        // input -- otherwise both sit open on top of each other.
         const openPanel = renameTrigger.closest(".row-menu-panel");
         if (openPanel) {
           openPanel.hidden = true;
@@ -1083,29 +921,13 @@
         startRename(row);
       });
 
-      // Double-clicking the name itself is a second, faster entry point to
-      // the exact same rename flow -- a common enough convention (file
-      // managers, browser bookmark bars) that it's worth supporting
-      // alongside the "..." menu item rather than instead of it.
-      //
-      // .conversation-link is a real <a href>, and a browser fires a click
-      // event's own default navigation before it ever gets to a dblclick
-      // event -- by the time dblclick would fire, a plain
-      // preventDefault() there is too late, the first click already
-      // navigated away. So every click on the link is held for a short
-      // window instead: if a second click arrives in time (a real
-      // dblclick), the pending navigation is cancelled and rename starts;
-      // otherwise it fires as a normal single-click navigation, just
-      // delayed by that same short window. This delay is the deliberate
-      // cost of supporting double-click-to-rename on what's otherwise a
-      // plain link.
       let pendingNavigation = null;
 
       document.addEventListener("click", (event) => {
         const link = event.target.closest(".conversation-link");
         if (!link) return;
         event.preventDefault();
-        if (event.detail > 1) return; // the 2nd+ click of a dblclick -- handled below instead
+        if (event.detail > 1) return;
 
         const href = link.getAttribute("href");
         pendingNavigation = window.setTimeout(() => {
@@ -1125,10 +947,6 @@
         startRename(link.closest(".conversation-row"));
       });
 
-      // A blur means the input lost focus without an Enter-triggered
-      // submit (which navigates the page away, making this moot) --
-      // clicking elsewhere, or Escape moving focus back to the trigger,
-      // both count as "cancel".
       document.addEventListener(
         "focusout",
         (event) => {
@@ -1145,14 +963,6 @@
       });
     })();
 
-    // Prevent "+ New chat" (and the greeting page's suggestion chips) from
-    // creating a pile of conversations if clicked more than once before the
-    // page navigates away -- each is a real page POST/redirect, not an
-    // AJAX call, so a slow connection leaves a window where a second click
-    // fires a second request. Disabling on submit closes that window; the
-    // server-side cleanup in create_conversation() (deleting any of this
-    // user's conversations that were never actually used) is the backstop
-    // for whatever slips through anyway.
     document.querySelectorAll("[data-new-chat-form]").forEach((form) => {
       form.addEventListener("submit", () => {
         const button = form.querySelector("button");
@@ -1160,30 +970,16 @@
       });
     });
 
-    // Suggestion chips ("My landlord won't fix something", etc.) create a
-    // new conversation via a real page POST/redirect -- there's no
-    // conversation to send a chat message into until the server responds
-    // with one. So the chip's prompt is stashed here, right before that
-    // navigation happens, and picked back up once the new page loads (see
-    // the pendingChatPrompt block below) to fill the message box and send
-    // it automatically, so clicking a chip both starts *and asks* the
-    // question in one step instead of leaving a blank conversation behind.
     document.querySelectorAll(".suggestion-chip[data-prompt]").forEach((chip) => {
       chip.addEventListener("click", () => {
         try {
           sessionStorage.setItem("pendingChatPrompt", chip.dataset.prompt);
         } catch (error) {
-          // Storage can be unavailable (private browsing, disabled
-          // storage) -- worst case the chip just behaves like a normal
-          // "start a new chat with this title" button, so fail silently.
+
         }
       });
     });
 
-    // Dynamic, time-of-day greeting on the landing/empty-state view. Uses
-    // the visitor's own local clock (the server has no way to know that),
-    // so this only runs client-side -- the Jinja-rendered fallback above
-    // covers the no-JS/before-hydration case.
     (function () {
       const greetingText = document.getElementById("greeting-text");
       const greetingDate = document.getElementById("greeting-date");
@@ -1216,9 +1012,6 @@
       const sendBtn = document.getElementById("send-btn");
       const conversationId = chatForm.dataset.conversationId;
 
-      // Enter sends the message (matching Claude/ChatGPT); Shift+Enter
-      // still inserts a newline, which is a textarea's normal default
-      // behavior for a plain Enter -- so only plain Enter is intercepted.
       messageInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
@@ -1228,34 +1021,14 @@
         }
       });
 
-      // Auto-grow the textarea as its content wraps to more lines, up to
-      // max-height (the CSS's overflow-y: auto takes over past that
-      // point) -- this, plus `resize: none` in the CSS, is what replaces
-      // the browser's native drag-to-resize corner handle with the box
-      // just growing on its own while typing, the way every modern chat
-      // input behaves.
       function autoGrowMessageInput() {
         messageInput.style.height = "auto";
         messageInput.style.height = messageInput.scrollHeight + "px";
       }
 
-      // Live character counter. The textarea's own maxlength stops typing
-      // past the cap, but silently -- a paste that's too long is truncated
-      // with no explanation at all -- so this makes the ceiling visible
-      // before someone runs into it. The number is read back off the
-      // textarea's own maxlength (rendered from routes.py's
-      // MAX_MESSAGE_LENGTH) rather than interpolated into JS a second
-      // time, so there's exactly one source for it and no way for a
-      // missing template variable to produce a syntax error here.
-      // maxLength is -1 when the attribute is absent, which just disables
-      // the counter rather than showing nonsense.
       const MAX_MESSAGE_LENGTH = messageInput.maxLength;
       const charCount = document.getElementById("char-count");
-      // Appear with 250 characters left, turn amber with 100 left. A
-      // fixed number of remaining characters rather than a percentage of
-      // the cap: "250 left" means the same thing to someone typing
-      // whatever the cap happens to be, whereas a percentage silently
-      // changes how much warning they get every time the cap moves.
+
       const SHOW_COUNTER_WHEN_REMAINING = 250;
       const WARN_COUNTER_WHEN_REMAINING = 100;
       const SHOW_COUNTER_FROM = MAX_MESSAGE_LENGTH - SHOW_COUNTER_WHEN_REMAINING;
@@ -1265,9 +1038,7 @@
         if (!charCount || MAX_MESSAGE_LENGTH <= 0) return;
         const used = messageInput.value.length;
         const remaining = MAX_MESSAGE_LENGTH - used;
-        // Counts down what's left rather than up from zero -- at the point
-        // this becomes visible, "180 characters left" is the number the
-        // person actually needs.
+
         charCount.textContent =
           remaining === 1 ? "1 character left" : remaining + " characters left";
         charCount.classList.toggle("is-visible", used >= SHOW_COUNTER_FROM);
@@ -1281,9 +1052,6 @@
       });
       updateCharCount();
 
-      // Honours the OS "reduce motion" setting: smooth scrolling is
-      // motion too, so this falls back to an instant jump rather than
-      // animating the scroll for someone who asked not to be animated at.
       const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
       function scrollChatToBottom() {
@@ -1312,9 +1080,6 @@
         return wrapper;
       }
 
-      // Shown the instant a message is sent and removed the instant a reply
-      // (or an error) comes back, so there's never a silent gap where it
-      // looks like the click didn't register.
       function renderThinking() {
         const wrapper = document.createElement("div");
         wrapper.className = "message assistant is-new";
@@ -1361,11 +1126,7 @@
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              // This is a fetch() call, not a plain <form> POST, so it has
-              // no hidden csrf_token field to carry the token in -- the
-              // CSRF-token <meta> tag in <head> is read into this header
-              // instead, which Flask-WTF's CSRFProtect checks just as it
-              // does the form field.
+
               "X-CSRFToken": CSRF_TOKEN,
             },
             body: JSON.stringify({ conversation_id: conversationId, content: text })
@@ -1401,13 +1162,6 @@
         }
       });
 
-      // If a homepage suggestion chip just created this conversation, a
-      // prompt is waiting in sessionStorage (see the click handler above).
-      // The empty chat-box check is a safety net as much as a condition:
-      // it means this only ever auto-fires into a conversation that has no
-      // messages yet, never into one the visitor is already partway
-      // through, even if a stale value were somehow still sitting in
-      // storage.
       if (chatBox && chatBox.children.length === 0) {
         let pendingPrompt = null;
         try {
