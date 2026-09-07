@@ -5,6 +5,7 @@ Supabase service, and registers the routes defined in routes.py.
 """
 
 from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from ai_service import AIService
 from alerting import configure_alerting
@@ -23,6 +24,21 @@ def create_app() -> Flask:
     # Create the Flask application object that the rest of the project shares.
     app = Flask(__name__)
     app.secret_key = settings.flask_secret_key
+
+    # Render (like Heroku/Railway/Fly) terminates TLS at its own edge proxy
+    # and forwards plain HTTP to this process, adding X-Forwarded-Proto/
+    # -Host/-For headers to say what the request actually looked like from
+    # the outside. Flask/Werkzeug ignore those by default (trusting them
+    # blindly would be a spoofing risk for an app that's reachable directly),
+    # but this app is only ever reached through Render's proxy in
+    # production, so trusting exactly one hop of them is safe and is the
+    # standard fix for this deployment shape. Without it, request.scheme
+    # reports "http" even though the visitor is on https, which made
+    # url_for(..., _external=True) generate an http:// reset-password link
+    # -- Supabase's redirect_to allowlist match is scheme-sensitive, so that
+    # link never matched what was added to the allowlist and Supabase fell
+    # back to the project's Site URL (localhost) instead.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
     # Build the Supabase service here and store it on the app so routes.py can
     # retrieve the shared service for signup and login requests.
