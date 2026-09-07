@@ -1,0 +1,96 @@
+Deployment Summary — Fix password-reset link landing on localhost
+Date: 2026-09-07
+
+Requirement (from conversation, not BRANCH-PLAN.md): after the previous
+branch shipped the forgot/reset-password feature, testing it against the
+live Render deployment showed the emailed reset link landing on localhost
+instead of the deployed app -- reported as "the link goes to nothing, just
+goes to localhost."
+
+Root cause (two contributing causes, only one fixable from code):
+
+1. (Not fixable from code -- needs a human with Supabase dashboard access)
+   This Supabase project's Auth -> URL Configuration -> Site URL is very
+   likely still set to its default, http://localhost:3000 (or similar), and
+   the app's /reset-password URL has not yet been added to the Redirect
+   URLs allowlist. When Supabase's `recover` email is sent with a
+   redirect_to that isn't on that allowlist, Supabase silently ignores it
+   and falls back to the Site URL instead -- which is exactly "goes to
+   localhost." This was already flagged as a required manual step in the
+   previous branch's log entry and PR description, but is being called out
+   again here because of point 2 below: even once the URL is added to the
+   allowlist, the app was generating the *wrong* URL to add in the first
+   place.
+
+2. (Fixed here) app.py's create_app() builds redirect_to via
+   url_for("main.reset_password", _external=True) inside the
+   /forgot-password route. Render, like Heroku/Railway/Fly, terminates TLS
+   at its own edge proxy and forwards plain HTTP to this process, setting
+   X-Forwarded-Proto/-Host/-For headers to describe what the request
+   actually looked like from the outside. Flask/Werkzeug ignore those
+   headers by default (trusting them unconditionally would be a spoofing
+   risk for an app reachable directly, without a proxy in front of it) --
+   so request.scheme reported "http" even on a real https visit, and
+   url_for(_external=True) generated an http://<host>/reset-password link.
+   Supabase's redirect_to match against the allowlist is scheme-sensitive,
+   so even a correctly-added https:// allowlist entry would never match
+   the http:// link this app was actually generating -- meaning the
+   dashboard fix in point 1 alone would NOT have been enough on its own to
+   resolve this.
+
+Change shipped (branch fix/app/proxyfix-for-external-urls, off main after
+PR #18 merged):
+
+- app.py: wrapped app.wsgi_app in werkzeug.middleware.proxy_fix.ProxyFix
+  (x_for=1, x_proto=1, x_host=1, x_prefix=1) right after the Flask app is
+  constructed. This is the standard, minimal fix for exactly this
+  deployment shape (a single trusted reverse proxy in front of the app) --
+  trusting one hop of X-Forwarded-* is safe here because Render's edge is
+  the only way this app is ever reached in production; a locally-run dev
+  server with no proxy in front of it simply won't send these headers, so
+  ProxyFix has nothing to override and behaves exactly as before.
+- tests/test_proxy_fix.py (new, 3 tests): unlike every other test file,
+  this one has to import app.py itself (to exercise create_app()'s actual
+  WSGI wiring) rather than building a throwaway Flask app around main_bp --
+  and app.py runs create_app() at module import time (`app =
+  create_app()`), which requires FLASK_SECRET_KEY to already be set in the
+  real environment. This file sets FLASK_SECRET_KEY via os.environ before
+  importing app, with a comment explaining why -- this is the first test
+  file in this repo to need that, since it's the first one testing
+  something only visible at the create_app()/WSGI level rather than at the
+  Blueprint/route level. Covers: app.wsgi_app is actually a ProxyFix
+  instance; a request carrying X-Forwarded-Proto: https and
+  X-Forwarded-Host produces a redirect_to that is exactly
+  "https://<that host>/reset-password" (the real regression case); and a
+  request with no forwarded headers at all still resolves to a normal
+  http://.../reset-password link instead of ProxyFix inventing an https
+  URL out of nowhere when there's nothing to trust.
+
+Verified locally:
+- `python -m unittest discover -s tests` -- 84/84 pass (81 + 3 new).
+- `python -m py_compile` on every tracked .py file -- clean.
+
+Still needs a human, before this actually fixes the reported symptom end to
+end:
+- Log into the Supabase dashboard for this project -> Authentication -> URL
+  Configuration.
+- Set Site URL to the real deployed app URL (e.g.
+  https://<your-app>.onrender.com) instead of localhost.
+- Add https://<your-app>.onrender.com/reset-password to Redirect URLs.
+- Re-test the "forgot password" flow end to end against the live
+  deployment once both of the above are saved -- this branch's fix makes
+  the app generate the *correct* link to put on that allowlist, but the
+  allowlist itself still has to be updated by hand.
+
+Deliberately not done:
+- Did not add SERVER_NAME or PREFERRED_URL_SCHEME to config.py/app.py --
+  those affect URL generation *outside* an active request context (e.g. in
+  a background job), which nothing in this app currently does; ProxyFix
+  is the correct fix for the actual failure mode here, which only ever
+  happens inside a request.
+- Did not change session cookie settings (e.g. SESSION_COOKIE_SECURE) --
+  out of scope for this specific bug, though also worth a look at some
+  point now that request.is_secure will correctly report True in
+  production thanks to this same ProxyFix change.
+- Did not add a render.yaml or otherwise touch how the app is deployed on
+  Render -- this only needed an in-app code change.
