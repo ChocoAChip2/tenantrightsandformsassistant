@@ -85,6 +85,15 @@
       --success-tint: #1f3327;
     }
     * { box-sizing: border-box; }
+    /* The user-menu popup below sets `display: flex` on the same element
+       that also carries the native `hidden` attribute -- an author rule
+       that sets `display` always wins over the browser's built-in
+       `[hidden] { display: none }` default, regardless of selector
+       specificity, so without this the menu rendered open on every page
+       load, not just after clicking its trigger. This one rule guarantees
+       `hidden` always actually hides, no matter what display value some
+       other class sets. */
+    [hidden] { display: none !important; }
     body {
       margin: 0;
       height: 100vh;
@@ -207,6 +216,7 @@
       display: flex;
       align-items: stretch;
       border-radius: 8px;
+      position: relative;
     }
     .conversation-row:hover, .conversation-row:focus-within { background: var(--bg); }
     .conversation-row.active { background: var(--accent-tint); }
@@ -223,42 +233,75 @@
       white-space: nowrap;
     }
     .conversation-row.active .conversation-link { color: var(--accent-hover); font-weight: 600; }
-    /* Archive/delete stay out of the way until the row is hovered or
-       keyboard-focused, so the list reads as plain conversation titles by
-       default instead of a row of buttons. */
-    .conversation-actions {
+    /* Archive/Delete (Restore/Delete for an archived row) live behind a
+       single "..." trigger on the right of the row instead of two separate
+       buttons -- one consistent affordance per row instead of a row of
+       buttons to parse. The trigger stays out of the way until the row is
+       hovered/focused or its own menu is open, the same as the two
+       separate buttons it replaces used to. */
+    .row-menu-trigger {
       display: none;
       align-items: center;
-      gap: 2px;
-      padding-right: 6px;
+      justify-content: center;
       flex-shrink: 0;
-    }
-    .conversation-row:hover .conversation-actions,
-    .conversation-row:focus-within .conversation-actions {
-      display: flex;
-    }
-    /* Spelled-out labels instead of icon glyphs -- "Archive"/"Delete" read
-       unambiguously at a glance, where an emoji (a file box vs. a trash can)
-       made people second-guess which button did what. Delete additionally
-       gets a red-tinted hover so the destructive action stands out even
-       without reading the word. */
-    .icon-btn {
+      align-self: center;
+      margin-right: 4px;
       border: 0;
       background: transparent;
       color: var(--muted);
       cursor: pointer;
-      font-size: 11px;
-      font-weight: 700;
+      font-size: 16px;
       line-height: 1;
-      padding: 6px 8px;
+      min-width: 0;
+      height: auto;
+      padding: 4px 7px;
       border-radius: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      white-space: nowrap;
       font-family: inherit;
     }
-    .icon-btn:hover { background: var(--border); color: var(--text); }
-    .icon-btn.delete-btn:hover { background: var(--error-tint); color: var(--error); }
+    .conversation-row:hover .row-menu-trigger,
+    .conversation-row:focus-within .row-menu-trigger,
+    .row-menu-trigger[aria-expanded="true"] {
+      display: inline-flex;
+    }
+    .row-menu-trigger:hover, .row-menu-trigger[aria-expanded="true"] { background: var(--border); color: var(--text); }
+    .row-menu-panel {
+      position: absolute;
+      top: calc(100% + 2px);
+      right: 4px;
+      z-index: 5;
+      min-width: 130px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .row-menu-panel form { margin: 0; }
+    /* Explicit min-width/height resets -- without them these buttons would
+       inherit the global button rule's min-width:76px/height:44px (sized
+       for the big Send/primary buttons), which is far too large for a
+       compact menu item and would make the panel look broken. */
+    .row-menu-panel button {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      height: auto;
+      text-align: left;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 400;
+      cursor: pointer;
+    }
+    .row-menu-panel button:hover { background: var(--bg); }
+    .row-menu-panel button.delete-btn:hover { background: var(--error-tint); color: var(--error); }
     .empty-hint { color: var(--muted); font-size: 13px; margin: 0; }
 
     .archived-section { font-size: 13px; color: var(--muted); }
@@ -321,12 +364,24 @@
     }
 
     /* Bottom-left account control: identity + a popup with Settings/Log
-       out (and room for more later), instead of header links. */
+       out (and room for more later), instead of header links.
+       column-reverse (rather than the popup being position:absolute) is
+       deliberate: the trigger button is the *first* element in the markup
+       and the popup the second, so with the row order reversed the trigger
+       still renders at the bottom and the popup opens directly above it,
+       but now genuinely in-flow. That means opening it grows this footer's
+       real height, and because .sidebar-scroll is the flex:1 sibling
+       sharing the same fixed-height column, the scroll area shrinks to
+       make room instead of the popup floating on top of it -- so Settings/
+       Log out can never cover the last conversation or an archived chat,
+       no matter how long the list is or how far it's scrolled. */
     .sidebar-footer {
       flex-shrink: 0;
       border-top: 1px solid var(--border);
       padding: 8px;
-      position: relative;
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 6px;
     }
     .user-menu-trigger {
       width: 100%;
@@ -366,10 +421,6 @@
     }
     .user-menu-trigger .chevron { color: var(--muted); font-size: 10px; }
     .user-menu {
-      position: absolute;
-      left: 8px;
-      right: 8px;
-      bottom: calc(100% + 6px);
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -569,7 +620,7 @@
          chip strip doesn't have room for -- available from the Archived
          section's own row on desktop, or via the conversation itself once
          opened, on mobile. */
-      .conversation-actions { display: none !important; }
+      .row-menu-trigger { display: none !important; }
       .archived-section { display: none; }
       .chat-area { min-height: 0; }
       #chat-box { padding: 14px 14px 8px; }
@@ -611,7 +662,7 @@
   <div class="layout">
     <aside class="sidebar">
       <div class="sidebar-scroll">
-        <form class="new-chat-form" method="POST" action="{{ url_for('main.create_conversation') }}">
+        <form class="new-chat-form" method="POST" action="{{ url_for('main.create_conversation') }}" data-new-chat-form>
           <input type="text" name="title" placeholder="New chat name (optional)">
           <button type="submit">+ New chat</button>
         </form>
@@ -623,12 +674,13 @@
                 class="conversation-link"
                 href="{{ url_for('main.chat', conversation_id=conversation.id) }}"
               >{{ conversation.title or "Untitled conversation" }}</a>
-              <div class="conversation-actions">
+              <button type="button" class="row-menu-trigger" data-row-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="Conversation options">&#8942;</button>
+              <div class="row-menu-panel" role="menu" hidden>
                 <form method="POST" action="{{ url_for('main.archive_conversation', conversation_id=conversation.id) }}">
-                  <button type="submit" class="icon-btn" title="Archive conversation" aria-label="Archive conversation">Archive</button>
+                  <button type="submit" role="menuitem">Archive</button>
                 </form>
                 <form method="POST" action="{{ url_for('main.delete_conversation', conversation_id=conversation.id) }}" onsubmit="return confirm('Delete this conversation and all of its messages? This cannot be undone.');">
-                  <button type="submit" class="icon-btn delete-btn" title="Delete conversation" aria-label="Delete conversation">Delete</button>
+                  <button type="submit" role="menuitem" class="delete-btn">Delete</button>
                 </form>
               </div>
             </div>
@@ -639,7 +691,7 @@
 
         {% if archived_conversations %}
           <details class="archived-section">
-            <summary>Archived ({{ archived_conversations|length }})</summary>
+            <summary>&#128193; Archived ({{ archived_conversations|length }})</summary>
             <div class="conversation-list">
               {% for conversation in archived_conversations %}
                 <div class="conversation-row archived {% if conversation.id == active_conversation_id %}active{% endif %}">
@@ -647,12 +699,13 @@
                     class="conversation-link"
                     href="{{ url_for('main.chat', conversation_id=conversation.id) }}"
                   >{{ conversation.title or "Untitled conversation" }}</a>
-                  <div class="conversation-actions">
+                  <button type="button" class="row-menu-trigger" data-row-menu-trigger aria-haspopup="menu" aria-expanded="false" aria-label="Conversation options">&#8942;</button>
+                  <div class="row-menu-panel" role="menu" hidden>
                     <form method="POST" action="{{ url_for('main.unarchive_conversation', conversation_id=conversation.id) }}">
-                      <button type="submit" class="icon-btn" title="Restore conversation" aria-label="Restore conversation">Restore</button>
+                      <button type="submit" role="menuitem">Restore</button>
                     </form>
                     <form method="POST" action="{{ url_for('main.delete_conversation', conversation_id=conversation.id) }}" onsubmit="return confirm('Delete this conversation and all of its messages? This cannot be undone.');">
-                      <button type="submit" class="icon-btn delete-btn" title="Delete conversation" aria-label="Delete conversation">Delete</button>
+                      <button type="submit" role="menuitem" class="delete-btn">Delete</button>
                     </form>
                   </div>
                 </div>
@@ -707,15 +760,15 @@
             <h1 class="greeting-title" id="greeting-text">Welcome{% if user_email %}, {{ user_email.split("@")[0]|capitalize }}{% endif %}</h1>
             <p class="greeting-sub">Ask about repairs, evictions, deposits, or anything else about your tenancy in NYC -- or pick up a previous conversation on the left.</p>
             <div class="suggestions">
-              <form method="POST" action="{{ url_for('main.create_conversation') }}">
+              <form method="POST" action="{{ url_for('main.create_conversation') }}" data-new-chat-form>
                 <input type="hidden" name="title" value="Repairs and heat">
                 <button type="submit" class="suggestion-chip">My landlord won't fix something</button>
               </form>
-              <form method="POST" action="{{ url_for('main.create_conversation') }}">
+              <form method="POST" action="{{ url_for('main.create_conversation') }}" data-new-chat-form>
                 <input type="hidden" name="title" value="Eviction notice">
                 <button type="submit" class="suggestion-chip">I got an eviction notice</button>
               </form>
-              <form method="POST" action="{{ url_for('main.create_conversation') }}">
+              <form method="POST" action="{{ url_for('main.create_conversation') }}" data-new-chat-form>
                 <input type="hidden" name="title" value="Security deposit">
                 <button type="submit" class="suggestion-chip">Security deposit question</button>
               </form>
@@ -775,6 +828,64 @@
       });
     })();
 
+    // Per-conversation "..." menu (Archive/Delete, or Restore/Delete for an
+    // archived row). One delegated handler covers every row instead of
+    // wiring up a listener per row, since the sidebar can have any number
+    // of conversations and archiving/deleting doesn't reload the page's
+    // script. Only one menu is ever open at a time.
+    (function () {
+      function closeMenu(trigger) {
+        const panel = trigger.nextElementSibling;
+        if (panel) panel.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+      }
+
+      function closeAllMenus(except) {
+        document.querySelectorAll("[data-row-menu-trigger]").forEach((trigger) => {
+          if (trigger !== except) closeMenu(trigger);
+        });
+      }
+
+      document.addEventListener("click", (event) => {
+        const trigger = event.target.closest("[data-row-menu-trigger]");
+        if (trigger) {
+          event.preventDefault();
+          event.stopPropagation();
+          const panel = trigger.nextElementSibling;
+          const isOpen = panel && !panel.hidden;
+          closeAllMenus(trigger);
+          if (panel) {
+            panel.hidden = isOpen;
+            trigger.setAttribute("aria-expanded", isOpen ? "false" : "true");
+          }
+          return;
+        }
+        // Clicked outside every trigger/panel -- close whatever is open.
+        if (!event.target.closest(".row-menu-panel")) {
+          closeAllMenus(null);
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeAllMenus(null);
+      });
+    })();
+
+    // Prevent "+ New chat" (and the greeting page's suggestion chips) from
+    // creating a pile of conversations if clicked more than once before the
+    // page navigates away -- each is a real page POST/redirect, not an
+    // AJAX call, so a slow connection leaves a window where a second click
+    // fires a second request. Disabling on submit closes that window; the
+    // server-side cleanup in create_conversation() (deleting any of this
+    // user's conversations that were never actually used) is the backstop
+    // for whatever slips through anyway.
+    document.querySelectorAll("[data-new-chat-form]").forEach((form) => {
+      form.addEventListener("submit", () => {
+        const button = form.querySelector("button");
+        if (button) button.disabled = true;
+      });
+    });
+
     // Dynamic, time-of-day greeting on the landing/empty-state view. Uses
     // the visitor's own local clock (the server has no way to know that),
     // so this only runs client-side -- the Jinja-rendered fallback above
@@ -810,6 +921,18 @@
       const messageInput = document.getElementById("message-input");
       const sendBtn = document.getElementById("send-btn");
       const conversationId = chatForm.dataset.conversationId;
+
+      // Enter sends the message (matching Claude/ChatGPT); Shift+Enter
+      // still inserts a newline, which is a textarea's normal default
+      // behavior for a plain Enter -- so only plain Enter is intercepted.
+      messageInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          if (!sendBtn.disabled) {
+            chatForm.requestSubmit();
+          }
+        }
+      });
 
       function renderMessage(role, content) {
         const wrapper = document.createElement("div");

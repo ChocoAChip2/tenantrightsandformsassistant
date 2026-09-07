@@ -129,6 +129,24 @@ class ResetPasswordTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Choose a new password", response.get_data(as_text=True))
 
+    def test_hidden_attribute_override_rule_present(self):
+        """Regression guard: #reset-form and #invalid-link-notice both rely
+        on the native `hidden` attribute to stay hidden until the page's own
+        script decides which one to show. A bare `form { display: grid }`
+        rule (author-origin) silently wins over the browser's built-in
+        `[hidden] { display: none }` default regardless of specificity,
+        which meant the reset form used to render visible even before a
+        valid recovery link was confirmed. This locks in the fix."""
+        app = _build_test_app(FakeSupabaseService())
+        client = app.test_client()
+
+        response = client.get("/reset-password")
+
+        self.assertIn(
+            "[hidden] { display: none !important; }",
+            response.get_data(as_text=True),
+        )
+
     def test_missing_tokens_redirects_to_forgot_password_with_error(self):
         service = FakeSupabaseService()
         app = _build_test_app(service)
