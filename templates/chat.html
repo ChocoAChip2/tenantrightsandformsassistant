@@ -434,6 +434,26 @@
     }
 
     .bubble { min-width: 0; overflow-wrap: anywhere; }
+    .bubble.rich > :first-child { margin-top: 0; }
+    .bubble.rich > :last-child { margin-bottom: 0; }
+    .bubble.rich p { margin: 0 0 10px; }
+    .bubble.rich ul, .bubble.rich ol { margin: 0 0 10px; padding-left: 22px; }
+    .bubble.rich li { margin: 3px 0; }
+    .bubble.rich h4, .bubble.rich h5, .bubble.rich h6 {
+      margin: 14px 0 6px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .bubble.rich code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+      background: var(--accent-tint);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .bubble.rich a { color: var(--accent); text-decoration: underline; }
+    .bubble.rich a:hover { color: var(--accent-hover); }
+    .message.user .bubble.rich code { background: rgba(0, 0, 0, 0.08); }
 
     .message.assistant .bubble {
       color: var(--text);
@@ -751,7 +771,11 @@
             {% for message in messages %}
               <div class="message {{ message.role }}">
                 <span class="label">{{ "You" if message.role == "user" else "Assistant" }}</span>
-                <div class="bubble">{{ message.content }}</div>
+                {% if message.role == "assistant" and message.content_html %}
+                  <div class="bubble rich">{{ message.content_html|safe }}</div>
+                {% else %}
+                  <div class="bubble">{{ message.content }}</div>
+                {% endif %}
               </div>
             {% endfor %}
           </div>
@@ -799,8 +823,29 @@
     const chatBox = document.getElementById("chat-box");
     const chatForm = document.getElementById("chat-form");
 
-    if (chatBox) {
-      chatBox.scrollTop = chatBox.scrollHeight;
+    function findScrollContainer(node) {
+      let current = node && node.parentElement;
+      while (current && current !== document.body) {
+        const overflowY = window.getComputedStyle(current).overflowY;
+        if (overflowY === "auto" || overflowY === "scroll") return current;
+        current = current.parentElement;
+      }
+      return node;
+    }
+
+    const chatScroller = chatBox ? findScrollContainer(chatBox) : null;
+
+    function jumpChatToBottom() {
+      if (chatScroller) chatScroller.scrollTop = chatScroller.scrollHeight;
+    }
+
+    if (chatScroller) {
+      jumpChatToBottom();
+      requestAnimationFrame(() => {
+        jumpChatToBottom();
+        requestAnimationFrame(jumpChatToBottom);
+      });
+      window.addEventListener("load", jumpChatToBottom);
     }
 
     (function () {
@@ -1055,13 +1100,17 @@
       const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
       function scrollChatToBottom() {
-        chatBox.scrollTo({
-          top: chatBox.scrollHeight,
-          behavior: prefersReducedMotion.matches ? "auto" : "smooth",
+        if (!chatScroller) return;
+        const behavior = prefersReducedMotion.matches ? "auto" : "smooth";
+        requestAnimationFrame(() => {
+          chatScroller.scrollTo({ top: chatScroller.scrollHeight, behavior });
+          requestAnimationFrame(() => {
+            chatScroller.scrollTo({ top: chatScroller.scrollHeight, behavior });
+          });
         });
       }
 
-      function renderMessage(role, content) {
+      function renderMessage(role, content, html) {
         const wrapper = document.createElement("div");
         wrapper.className = `message ${role} is-new`;
 
@@ -1070,8 +1119,13 @@
         label.textContent = role === "user" ? "You" : "Assistant";
 
         const body = document.createElement("div");
-        body.className = "bubble";
-        body.textContent = content;
+        if (html) {
+          body.className = "bubble rich";
+          body.innerHTML = html;
+        } else {
+          body.className = "bubble";
+          body.textContent = content;
+        }
 
         wrapper.appendChild(label);
         wrapper.appendChild(body);
@@ -1151,7 +1205,7 @@
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || "Request failed.");
             thinkingEl.remove();
-            renderMessage("assistant", payload.reply);
+            renderMessage("assistant", payload.reply, payload.reply_html);
           }
         } catch (error) {
           thinkingEl.remove();

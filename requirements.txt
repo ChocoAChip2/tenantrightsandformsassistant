@@ -2,6 +2,7 @@ supabase
 Flask
 Flask-Limiter
 Flask-WTF
+cryptography
 google-genai
 gunicorn
 pypdf

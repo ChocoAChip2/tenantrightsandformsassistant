@@ -4,12 +4,17 @@ This file centralizes all auth/data communication with Supabase so routes.py
 can focus on request handling instead of client setup details.
 """
 
+import logging
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from supabase import Client, create_client
 
+import crypto_service
 from config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -105,7 +110,7 @@ class SupabaseService:
         response = (
             user_client
             .table("conversations")
-            .insert({"user_id": user_id, "title": title})
+            .insert({"user_id": user_id, "title": crypto_service.encrypt(title)})
             .execute()
         )
         return response.data[0]["id"]
@@ -174,22 +179,77 @@ class SupabaseService:
             raise ValueError("Conversation not found for this user.")
 
     def fetch_messages_for_conversation(self, user_client: Client, conversation_id: str) -> list[dict]:
-        """Fetch full message history for a conversation, ordered oldest->newest."""
+        """Fetch full message history for a conversation, ordered oldest->newest.
+
+        Also opportunistically re-encrypts bodies that are behind the
+        current scheme (plaintext from before encryption was enabled, or
+        sealed under a retired key/older algorithm), capped per call --
+        see _rewrap_messages.
+        """
 
         response = (
             user_client
             .table("messages")
-            .select("role,content,created_at")
+            .select("id,role,content,created_at")
             .eq("conversation_id", conversation_id)
             .order("created_at", desc=False)
             .execute()
         )
-        return response.data or []
+        rows = response.data or []
+
+        stale_ids = [
+            row["id"] for row in rows
+            if "id" in row and crypto_service.needs_rewrap(row.get("content"))
+        ]
+        for message in rows:
+            message["content"] = crypto_service.decrypt(message.get("content"))
+        if stale_ids:
+            self._rewrap_messages(user_client, stale_ids, rows)
+
+        for message in rows:
+            message.pop("id", None)
+        return rows
+
+    #: Most message bodies re-encrypted during a single read. A long
+    #: conversation opened for the first time after encryption is switched
+    #: on would otherwise fire one UPDATE per message inside a page
+    #: render. Capping it means the upgrade converges over a few visits
+    #: instead of making any one of them slow.
+    REWRAP_BATCH_LIMIT = 25
+
+    def _rewrap_messages(self, user_client: Client, stale_ids: list[str], rows: list[dict]) -> None:
+        """Re-encrypt message bodies under the current scheme, best-effort.
+
+        `rows` already hold decrypted content by this point, so this
+        re-seals from plaintext rather than decrypting a second time. A
+        failure is logged and dropped: the rows are still perfectly
+        readable as they are, and the next read retries.
+        """
+        by_id = {row["id"]: row for row in rows if "id" in row}
+        for message_id in stale_ids[: self.REWRAP_BATCH_LIMIT]:
+            row = by_id.get(message_id)
+            if row is None:
+                continue
+            try:
+                user_client.table("messages").update(
+                    {"content": crypto_service.encrypt(row["content"])}
+                ).eq("id", message_id).execute()
+            except Exception:
+                logger.exception("Failed to re-encrypt a message body; leaving it as-is.")
+                return
 
     def insert_message(self, user_client: Client, message: dict) -> None:
-        """Insert a single message row under RLS."""
+        """Insert a single message row under RLS.
 
-        user_client.table("messages").insert(message).execute()
+        The message body is wrapped by crypto_service on the way in (a
+        no-op when no key is configured). Copied rather than mutated in
+        place so the caller's dict -- which routes.py also uses to build
+        the reply it sends back to the browser -- still holds plaintext.
+        """
+
+        row = dict(message)
+        row["content"] = crypto_service.encrypt(row.get("content"))
+        user_client.table("messages").insert(row).execute()
 
     def fetch_all_conversations_with_messages(self, user_client: Client) -> list[dict]:
         """Fetch every conversation for the authenticated user with its full history.
@@ -288,7 +348,32 @@ class SupabaseService:
         )
         query = query.not_.is_("archived_at", "null") if archived else query.is_("archived_at", "null")
         response = query.execute()
-        return response.data or []
+        conversations = response.data or []
+        for conversation in conversations:
+            stored_title = conversation.get("title")
+            conversation["title"] = crypto_service.decrypt(stored_title)
+            # Opportunistic upgrade: a title still in plaintext, or sealed
+            # under a retired key or an older algorithm, gets rewritten
+            # under the current scheme as it is read. That is what makes a
+            # rotation or an algorithm change migrate itself over normal
+            # use rather than needing one big re-encryption pass.
+            if crypto_service.needs_rewrap(stored_title):
+                self._rewrap_conversation_title(user_client, conversation["id"], conversation["title"])
+        return conversations
+
+    def _rewrap_conversation_title(self, user_client: Client, conversation_id: str, title: str) -> None:
+        """Re-encrypt one conversation title under the current scheme.
+
+        Strictly best-effort. This runs inside a plain page render, so a
+        failure here must never break showing the sidebar -- the row stays
+        readable exactly as it was and will simply be retried next time.
+        """
+        try:
+            user_client.table("conversations").update(
+                {"title": crypto_service.encrypt(title)}
+            ).eq("id", conversation_id).execute()
+        except Exception:
+            logger.exception("Failed to re-encrypt a conversation title; leaving it as-is.")
 
     def set_conversation_archived(
         self, user_client: Client, conversation_id: str, user_id: str, archived: bool
@@ -327,7 +412,7 @@ class SupabaseService:
         response = (
             user_client
             .table("conversations")
-            .update({"title": title})
+            .update({"title": crypto_service.encrypt(title)})
             .eq("id", conversation_id)
             .eq("user_id", user_id)
             .execute()
