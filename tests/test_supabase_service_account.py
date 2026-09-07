@@ -54,6 +54,34 @@ class UpdateAccountTests(unittest.TestCase):
         account_client.auth.update_user.assert_called_once_with({"password": "newpassword1"})
 
 
+class SendPasswordResetEmailTests(unittest.TestCase):
+    def test_raises_when_supabase_not_configured(self):
+        service = SupabaseService(client=None, initialization_error="missing keys")
+
+        with self.assertRaises(RuntimeError):
+            service.send_password_reset_email("tenant@example.com")
+
+    def test_calls_reset_password_email_with_redirect_to(self):
+        fake_client = mock.MagicMock()
+        service = SupabaseService(client=fake_client)
+
+        service.send_password_reset_email(
+            "tenant@example.com", redirect_to="https://example.com/reset-password"
+        )
+
+        fake_client.auth.reset_password_email.assert_called_once_with(
+            "tenant@example.com", {"redirect_to": "https://example.com/reset-password"}
+        )
+
+    def test_omits_redirect_to_key_when_not_given(self):
+        fake_client = mock.MagicMock()
+        service = SupabaseService(client=fake_client)
+
+        service.send_password_reset_email("tenant@example.com")
+
+        fake_client.auth.reset_password_email.assert_called_once_with("tenant@example.com", {})
+
+
 class FetchAllConversationsWithMessagesTests(unittest.TestCase):
     def test_attaches_messages_to_each_active_and_archived_conversation(self):
         service = SupabaseService(client=mock.MagicMock())

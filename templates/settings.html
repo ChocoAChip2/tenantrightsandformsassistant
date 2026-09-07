@@ -145,6 +145,26 @@
       font-size: 14px;
     }
     input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+    /* Eye-emoji show/hide toggle, sitting inside the same box as the
+       password input rather than beside it. */
+    .password-field { position: relative; }
+    .password-field input[type="password"], .password-field input[type="text"] { padding-right: 42px; width: 100%; }
+    .password-toggle {
+      position: absolute;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-family: inherit;
+    }
+    .password-toggle:hover { background: var(--bg); }
+    .password-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     button, a.button {
       border: 0;
       border-radius: 8px;
@@ -221,11 +241,17 @@
         </label>
         <label>
           New password
-          <input type="password" name="password" minlength="6" placeholder="Leave blank to keep your current password">
+          <div class="password-field">
+            <input id="new-password" type="password" name="password" minlength="6" placeholder="Leave blank to keep your current password">
+            <button type="button" class="password-toggle" data-target="new-password" aria-label="Show password" title="Show password">&#128065;</button>
+          </div>
         </label>
         <label>
           Confirm new password
-          <input type="password" name="confirm_password" minlength="6">
+          <div class="password-field">
+            <input id="confirm-new-password" type="password" name="confirm_password" minlength="6">
+            <button type="button" class="password-toggle" data-target="confirm-new-password" aria-label="Show password" title="Show password">&#128065;</button>
+          </div>
         </label>
         <button type="submit">Save account changes</button>
       </form>
@@ -258,6 +284,21 @@
         });
       });
     })();
+
+    // Eye-emoji show/hide toggle, shared with login.html/signup.html/
+    // reset_password.html.
+    document.querySelectorAll(".password-toggle").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var input = document.getElementById(btn.dataset.target);
+        if (!input) return;
+        var revealing = input.type === "password";
+        input.type = revealing ? "text" : "password";
+        btn.textContent = revealing ? "\u{1F648}" : "\u{1F441}\u{FE0F}";
+        var label = revealing ? "Hide password" : "Show password";
+        btn.setAttribute("aria-label", label);
+        btn.title = label;
+      });
+    });
   </script>
 </body>
 </html>

@@ -109,6 +109,92 @@ def login():
     return render_template("login.html")
 
 
+@main_bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    """Collect an email and ask Supabase to send it a password-reset link."""
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+
+        if not email:
+            flash("Please enter your email.", "error")
+            return render_template("forgot_password.html")
+
+        try:
+            get_supabase_service().send_password_reset_email(
+                email=email,
+                redirect_to=url_for("main.reset_password", _external=True),
+            )
+        except Exception:
+            # Deliberately swallowed: whether Supabase is unreachable, the
+            # email doesn't exist, or anything else goes wrong, the visitor
+            # sees the same message either way -- see the docstring on
+            # send_password_reset_email for why this must not reveal
+            # whether an account exists for this address. Real failures
+            # (e.g. Supabase misconfigured) still land in the server logs.
+            logger.exception("Failed to send password reset email.")
+
+        flash(
+            "If an account exists for that email, we've sent a link to reset your password.",
+            "success",
+        )
+        return redirect(url_for("main.login"))
+
+    return render_template("forgot_password.html")
+
+
+@main_bp.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    """Set a new password from the recovery link Supabase emailed the user.
+
+    Supabase puts the recovery access/refresh tokens in the URL *fragment*
+    (#access_token=...&refresh_token=...&type=recovery), which browsers
+    never send to the server -- so reset_password.html reads them with
+    JavaScript and copies them into hidden form fields before this route
+    ever sees them. There is no logged-in session at this point (the
+    visitor followed an emailed link), so this can't use session tokens
+    the way settings.html's update_account does -- these tokens *are* the
+    only proof of identity here, which is exactly how Supabase's recovery
+    flow is designed to work.
+    """
+
+    if request.method == "POST":
+        access_token = request.form.get("access_token", "")
+        refresh_token = request.form.get("refresh_token", "")
+        new_password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if not access_token or not refresh_token:
+            flash("This reset link is invalid or has expired. Request a new one below.", "error")
+            return redirect(url_for("main.forgot_password"))
+
+        if not new_password or new_password != confirm_password:
+            flash("Passwords do not match.", "error")
+            return render_template("reset_password.html")
+
+        if len(new_password) < 6:
+            flash("Password must be at least 6 characters.", "error")
+            return render_template("reset_password.html")
+
+        try:
+            get_supabase_service().update_account(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                password=new_password,
+            )
+            flash("Your password has been reset. Please log in.", "success")
+            return redirect(url_for("main.login"))
+        except Exception:
+            logger.exception("Failed to reset password.")
+            flash(
+                "Could not reset your password. The link may have expired -- request a new one.",
+                "error",
+            )
+            return redirect(url_for("main.forgot_password"))
+
+    return render_template("reset_password.html")
+
+
 @main_bp.route("/chat")
 def chat():
     """Render the chat page: a conversation list plus the selected conversation."""

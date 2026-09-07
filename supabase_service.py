@@ -163,6 +163,34 @@ class SupabaseService:
             conversation["messages"] = self.fetch_messages_for_conversation(user_client, conversation["id"])
         return conversations
 
+    def send_password_reset_email(self, email: str, redirect_to: str | None = None) -> None:
+        """Ask Supabase to email a password-reset link to this address.
+
+        Supabase's underlying `recover` endpoint returns success regardless
+        of whether an account exists for this email (this is deliberate on
+        Supabase's part, to avoid letting an attacker use this endpoint to
+        discover which emails are registered) -- so routes.py's
+        forgot_password always shows the same generic confirmation message
+        no matter what happens here, and never reports back whether an
+        account actually existed.
+
+        redirect_to should point at this app's /reset-password route (with
+        _external=True so it's a full URL) -- Supabase appends the recovery
+        access/refresh tokens to that URL as a fragment when the visitor
+        clicks the emailed link. It must also be added to this Supabase
+        project's Auth -> URL Configuration -> Redirect URLs allowlist, or
+        Supabase will silently fall back to the project's default Site URL
+        instead of sending the visitor back to this app.
+        """
+
+        if not self.client:
+            raise RuntimeError("Supabase is not configured yet.")
+
+        options: dict[str, str] = {}
+        if redirect_to:
+            options["redirect_to"] = redirect_to
+        self.client.auth.reset_password_email(email, options)
+
     def update_account(
         self,
         access_token: str,
