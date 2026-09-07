@@ -1,0 +1,134 @@
+Deployment Summary — Frontend comments removed from everything served,
+rationale moved into docs/frontend/; "New chat name" input dropped
+Date: 2026-09-07
+
+Requirements (from conversation):
+1. "Please clean up the front end so if people do inspect they won't see
+   the comments, just the code, save any important comments in separate
+   MD files."
+2. "Also remove the 'new chat name (optional)' -- we'll let the user
+   change it afterward."
+
+Part 1 -- Why this mattered:
+
+Everything in this app's frontend is inline in the templates: no build
+step, no bundler, no separate .css/.js files. That means every comment
+ever written in a template was being served verbatim to anyone who opened
+View Source or DevTools -- and this codebase comments heavily, so that was
+231 comments across six templates, including notes naming internal
+routes, past bugs, and the reasoning behind security decisions.
+
+231 comments removed:
+  chat.html             145   1413 -> 1183 lines
+  settings.html          31    487 ->  438 lines
+  reset_password.html    20    283 ->  243 lines
+  signup.html            15    249 ->  219 lines
+  login.html             14    240 ->  216 lines
+  forgot_password.html    6    167 ->  161 lines
+
+Part 2 -- How the stripping was done (and why not by hand or by regex):
+
+A naive strip would have broken these pages, in ways that would not have
+been obvious until a user hit them:
+  - The password-toggle icons are inline SVG strings inside JS containing
+    xmlns="http://www.w3.org/2000/svg" -- a regex looking for "//" eats
+    the rest of that line and the icon markup with it.
+  - reset_password.html parses the recovery fragment with a real regex
+    literal, .replace(/^#/, "") -- naive "/*" and "//" handling mangles
+    it, and that line is the only thing standing between a user and a
+    reset form that cannot work.
+  - CSS strings, template literals with ${...}, and Jinja tags containing
+    quotes ({{ (user_email.split("@")[0] ...)|tojson }}) all offer
+    similar ways to lose code.
+
+So the strip was done with a purpose-built state-machine scanner that
+tracks HTML / CSS / JS context, string and template-literal state, regex
+literals (with the standard "previous significant token" heuristic for
+regex-vs-division), and treats Jinja tags as opaque spans in every mode.
+It was unit-tested against nine adversarial cases first -- URLs in
+strings, regex literals, division that is not a regex, protocol-relative
+URLs, Jinja tags with embedded quotes -- and only run once all nine
+passed. The tool itself is not checked in: it is a one-off, and keeping
+it would imply a "write comments then strip them" workflow, which is not
+the intent.
+
+Verification that nothing was corrupted (this is the part that matters):
+  - Every page was rendered through Flask and every resulting <script>
+    body -- 10 of them, fully Jinja-rendered, i.e. exactly what a browser
+    receives -- was passed through `node --check`. All parse.
+  - A list of load-bearing strings was asserted present after the strip:
+    the SVG xmlns URL, the eye-icon path data, the innerHTML icon swap,
+    the /^#/ regex, history.replaceState, "X-CSRFToken": CSRF_TOKEN, the
+    .bubble overflow rule, the [hidden] override, the counter threshold
+    constant, the prefers-reduced-motion block, and the dblclick
+    clearTimeout.
+  - Playwright re-ran the actual behavior: the character counter's four
+    thresholds, the password toggle (SVG present, themed color, type
+    flip), recovery-fragment parsing on both a valid and an invalid link,
+    double-click rename plus Escape, the account menu opening, logout
+    still being a POST form, and the delete-account double confirmation
+    including its disabled states. Console and page errors were captured
+    throughout: zero.
+  - 167/167 unit tests pass; HTML tag balance clean on all six templates.
+
+Part 3 -- Where the rationale went:
+
+docs/frontend/, four files:
+  - README.md -- why the templates carry no comments, the cross-template
+    conventions (no shared layout, design tokens, the three-state theming
+    scheme, SVG-not-emoji icons, CSRF, submit-disabling, reduced motion),
+    and a snippet for re-checking that no comment is being served.
+  - css-gotchas.md -- the load-bearing rules that look removable and are
+    not, each with the bug that removing it caused. This is the file that
+    earns its keep: [hidden] { display: none !important; } (broken three
+    times now), .bubble's min-width:0 + overflow-wrap pairing, .user-menu
+    having to stay in flow, display:contents on the logout form, #send-btn
+    being styled by id for specificity, .char-count using visibility not
+    display, and header h1 a's specificity.
+  - chat-page.md -- composer, counter, the dblclick-vs-navigation race and
+    its 220ms hold, the row menu, suggestion-chip auto-send, duplicate
+    submit prevention, POST logout, greeting, motion, mobile.
+  - auth-and-settings-pages.md -- the password toggle and why it is SVG,
+    the recovery-token fragment flow, theme radios, the account-form id
+    selector, and the Danger Zone's two confirmations.
+
+The honest cost of this trade is stated at the top of the docs README:
+the warnings are no longer next to the code they warn about, and several
+of these rules have already been "cleaned up" and re-broken once. Two
+mitigations: every template now opens with a Jinja comment ({# ... #},
+which Jinja strips before the response is written, so it is invisible to
+a browser) pointing at docs/frontend/ and telling the reader to check
+css-gotchas.md before deleting an unfamiliar CSS rule; and there is a new
+test file that fails if a comment ever reaches a rendered page again.
+
+Part 4 -- "New chat name (optional)" removed:
+
+The + New chat form was a text input plus a button. The input is gone;
+the button remains and posts nothing, so create_conversation()'s existing
+`or "New conversation"` fallback names it. Renaming afterwards is already
+supported two ways (the row's "..." menu, or double-clicking the name),
+which is what makes the up-front prompt redundant -- it asked for a
+decision before the user had had the conversation that would tell them
+what to call it. The route is unchanged and still honours a posted title,
+which the suggestion chips rely on (they post a hidden title so a chip
+conversation is named for its topic). Dead CSS for the removed input was
+deleted, including the mobile rule that sized it.
+
+New tests (167 total, up from 162 -- 5 new):
+- tests/test_templates_serve_no_comments.py (5): renders all seven pages
+  and asserts no HTML comment, no leaked Jinja comment marker, no CSS
+  comment inside any <style>, and no line-comment-shaped line inside any
+  <script>; plus a check that every template still carries its Jinja
+  pointer to docs/frontend/. The JS check deliberately matches only
+  comment *shapes* at line start, because "//" legitimately appears
+  mid-line inside the SVG icon URLs.
+
+Verified:
+- `python -m unittest discover -s tests` -- 167/167 pass.
+- `node --check` on all 10 rendered script blocks -- all valid.
+- HTML tag-balance check on all six templates -- clean.
+- Playwright, interactively, with console/page-error capture -- every
+  interaction listed in Part 2 still works, zero errors.
+
+Not done: the Python source keeps its comments. It is not served to
+anyone, and it is where most of this project's reasoning belongs.
