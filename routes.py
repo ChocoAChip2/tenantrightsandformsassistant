@@ -19,17 +19,39 @@ from form_service import FormService
 main_bp = Blueprint("main", __name__)
 logger = logging.getLogger(__name__)
 
-# A message this long is well past anything a real tenant question needs and
-# starts to look like someone testing how much they can push through a
-# single request -- Gemini calls bill (and take longer) roughly in
-# proportion to input size, so this caps both the cost and the latency risk
-# of one oversized message, on top of the per-minute rate limit below.
-MAX_MESSAGE_LENGTH = 8000
+# Per-message cap, in characters. Gemini calls bill (and take longer)
+# roughly in proportion to input size, so this bounds both the cost and the
+# latency risk of one oversized message, on top of the per-minute rate
+# limit below.
+#
+# 4000 is deliberately in the range mainstream AI chat products settled on
+# for a single turn (ChatGPT's free tier enforced ~4096 characters for
+# years) rather than the 1000 first suggested: 1000 characters is roughly
+# 150 words, and this app's whole job is tenants describing a situation --
+# pasting two paragraphs out of an eviction notice or a lease clause blows
+# past 1000 without anyone abusing anything. This is a one-line change if
+# a tighter cap turns out to be wanted.
+#
+# chat.html reads this same constant (passed into the template) for the
+# textarea's maxlength and its live character counter, so the number lives
+# in exactly one place; the client-side cap is only a nicer typing
+# experience, and the check in chat_message() below is the one that holds.
+MAX_MESSAGE_LENGTH = 4000
 
 # Matches the sidebar's rename <input maxlength="120"> -- the client-side
 # cap is just a nicer typing experience; this is the one that actually
 # holds, since the client-side value is trivial to bypass.
 MAX_CONVERSATION_TITLE_LENGTH = 120
+
+# How long a requested account deletion sits cancellable before the
+# database's scheduled purge actually removes it. 30 days is the window
+# Google, Discord and most consumer products settled on: long enough that
+# someone who deletes in frustration, or has their account taken over, has
+# a realistic chance to come back and undo it. The number is duplicated in
+# exactly one other place -- the purge_after value written into
+# account_deletion_requests -- and that row stores an absolute timestamp,
+# so changing this never moves a deadline someone was already shown.
+ACCOUNT_DELETION_GRACE_PERIOD_DAYS = 30
 
 
 def get_supabase_service() -> SupabaseService:
@@ -272,6 +294,7 @@ def chat():
         archived_conversations=archived_conversations,
         active_conversation_id=conversation_id,
         messages=messages,
+        max_message_length=MAX_MESSAGE_LENGTH,
     )
 
 
@@ -521,12 +544,119 @@ def chat_message():
 
 @main_bp.route("/settings")
 def settings():
-    """Show the settings page: appearance, account, and data export."""
+    """Show the settings page: appearance, account, data export, deletion."""
 
     if not session.get("user_id"):
         return redirect(url_for("main.login"))
 
-    return render_template("settings.html", user_email=session["user_email"])
+    # A pending deletion swaps the "Delete account" control for a banner
+    # with the exact date and a cancel button. Best-effort: if this lookup
+    # fails the rest of Settings still renders, since every other section
+    # on the page works fine without it.
+    pending_deletion = None
+    user_client = get_user_scoped_client()
+    if user_client:
+        try:
+            pending_deletion = get_supabase_service().get_pending_account_deletion(
+                user_client, session["user_id"]
+            )
+        except Exception:
+            logger.exception("Failed to look up a pending account deletion.")
+
+    return render_template(
+        "settings.html",
+        user_email=session["user_email"],
+        pending_deletion=pending_deletion,
+        deletion_grace_period_days=ACCOUNT_DELETION_GRACE_PERIOD_DAYS,
+    )
+
+
+@main_bp.route("/settings/account/delete", methods=["POST"])
+@limiter.limit("5 per minute")
+def request_account_deletion():
+    """Schedule the signed-in account for deletion after a grace period.
+
+    Deliberately gated behind two separate confirmations, both re-checked
+    here rather than trusted from the page: an acknowledgement checkbox,
+    and the user typing their own email address. Client-side confirmation
+    is a UX nicety that a crafted POST skips entirely -- and "your account
+    and every conversation in it are gone" is not a thing to do on a single
+    unverified request.
+
+    Nothing is deleted at this point. The account stays fully usable for
+    the whole grace period, which is what makes the cancel route below a
+    real undo rather than a formality.
+    """
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    acknowledged = request.form.get("confirm_understood") == "yes"
+    typed_email = request.form.get("confirm_email", "").strip().lower()
+    account_email = (session.get("user_email") or "").strip().lower()
+
+    if not acknowledged:
+        flash("Tick the confirmation box to schedule your account for deletion.", "error")
+        return redirect(url_for("main.settings"))
+
+    if not typed_email or typed_email != account_email:
+        flash("The email you typed does not match this account. Nothing was deleted.", "error")
+        return redirect(url_for("main.settings"))
+
+    try:
+        get_supabase_service().request_account_deletion(
+            user_client, session["user_id"], ACCOUNT_DELETION_GRACE_PERIOD_DAYS
+        )
+        flash(
+            f"Your account is scheduled for deletion in {ACCOUNT_DELETION_GRACE_PERIOD_DAYS} days. "
+            "You can cancel any time before then from this page.",
+            "success",
+        )
+    except Exception:
+        logger.exception("Failed to schedule an account deletion.")
+        flash("Could not schedule your account for deletion. Please try again.", "error")
+
+    return redirect(url_for("main.settings"))
+
+
+@main_bp.route("/settings/account/delete/cancel", methods=["POST"])
+@limiter.limit("10 per minute")
+def cancel_account_deletion():
+    """Cancel a pending account deletion.
+
+    No confirmation gate on this one on purpose -- the risky direction is
+    scheduling a deletion, not stopping one, so cancelling should be a
+    single click.
+    """
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    try:
+        cancelled = get_supabase_service().cancel_account_deletion(
+            user_client, session["user_id"]
+        )
+        if cancelled:
+            flash("Your account is no longer scheduled for deletion.", "success")
+        else:
+            flash("There was no pending deletion to cancel.", "error")
+    except Exception:
+        logger.exception("Failed to cancel an account deletion.")
+        flash("Could not cancel the deletion. Please try again.", "error")
+
+    return redirect(url_for("main.settings"))
 
 
 @main_bp.route("/settings/account", methods=["POST"])

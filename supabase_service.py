@@ -5,7 +5,7 @@ can focus on request handling instead of client setup details.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from supabase import Client, create_client
 
@@ -334,6 +334,73 @@ class SupabaseService:
         )
         if not response.data:
             raise ValueError("Conversation not found for this user.")
+
+    def request_account_deletion(
+        self, user_client: Client, user_id: str, grace_period_days: int
+    ) -> str:
+        """Schedule this account for deletion after a grace period.
+
+        Writes one row into account_deletion_requests and returns the
+        purge_after timestamp (ISO 8601) so the caller can tell the user the
+        exact date. Nothing is deleted here and the account keeps working
+        normally -- see supabase/migrations/20260907_account_deletion_requests.sql
+        for the pg_cron job that does the actual deleting once the deadline
+        passes, and why it lives in the database rather than in this app.
+
+        Upserts rather than inserts: user_id is the table's primary key, so
+        asking twice moves the deadline instead of erroring on a duplicate
+        key. That's also the behavior you'd want -- the second request is
+        the one the user just saw a date for.
+        """
+
+        purge_after = datetime.now(timezone.utc) + timedelta(days=grace_period_days)
+        purge_after_iso = purge_after.isoformat()
+
+        user_client.table("account_deletion_requests").upsert(
+            {
+                "user_id": user_id,
+                "requested_at": datetime.now(timezone.utc).isoformat(),
+                "purge_after": purge_after_iso,
+            }
+        ).execute()
+
+        return purge_after_iso
+
+    def cancel_account_deletion(self, user_client: Client, user_id: str) -> bool:
+        """Cancel a pending deletion. Returns whether there was one to cancel.
+
+        Deleting the row is the entire undo -- the purge function only ever
+        looks at rows in this table, so once it's gone the account is simply
+        a normal account again.
+        """
+
+        response = (
+            user_client
+            .table("account_deletion_requests")
+            .delete()
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return bool(response.data)
+
+    def get_pending_account_deletion(self, user_client: Client, user_id: str) -> dict | None:
+        """Return this user's pending deletion request, or None.
+
+        Used by the settings page to swap the "Delete account" control for a
+        "your account is scheduled for deletion on <date>" banner with a
+        cancel button.
+        """
+
+        response = (
+            user_client
+            .table("account_deletion_requests")
+            .select("requested_at,purge_after")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return rows[0] if rows else None
 
     def delete_conversation(self, user_client: Client, conversation_id: str, user_id: str) -> None:
         """Permanently delete a conversation and all of its messages.

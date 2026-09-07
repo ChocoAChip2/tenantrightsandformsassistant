@@ -498,6 +498,16 @@
       gap: 18px;
     }
     .message { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    /* Only messages added during this session animate in -- the class is
+       applied in renderMessage(), never rendered server-side. Animating
+       the whole history on page load would mean a long conversation
+       fluttering into place every time it's opened, which reads as busy
+       rather than polished. */
+    .message.is-new { animation: message-in .22s ease-out both; }
+    @keyframes message-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
+    }
     .message .label {
       font-size: 12px;
       font-weight: 600;
@@ -628,6 +638,49 @@
     }
     #send-btn:hover { background: var(--accent-hover); }
     #send-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* Live "used / allowed" counter under the composer. It uses
+       `visibility` rather than `hidden`/`display: none` so the line always
+       occupies its space -- the counter appearing at 80% of the cap then
+       doesn't shove the whole composer up by a line mid-sentence. Colors
+       escalate (muted -> warning -> error) as the cap gets close, so it
+       reads as information at 80% and as a limit at 100%. */
+    .char-count {
+      width: min(720px, 100%);
+      margin: 0 auto;
+      padding: 4px 24px 10px;
+      text-align: right;
+      font-size: 12px;
+      color: var(--muted);
+      visibility: hidden;
+    }
+    .char-count.is-visible { visibility: visible; }
+    .char-count.near-limit { color: var(--warning); }
+    .char-count.at-limit { color: var(--error); font-weight: 600; }
+
+    /* Small motion pass. Everything here is short (under a quarter of a
+       second) and tied to something the person just did -- the point is
+       that state changes read as movement rather than as the page
+       redrawing, not that anything is decorated. */
+    .conversation-link, .row-menu-trigger, .suggestion-chip, .user-menu-trigger, #send-btn {
+      transition: background-color .15s ease, color .15s ease, border-color .15s ease, transform .12s ease;
+    }
+    /* A button that visibly gives when pressed feels physical; without it
+       a click has no feedback at all until the page responds. */
+    #send-btn:active:not(:disabled) { transform: scale(0.92); }
+    .suggestion-chip:active { transform: translateY(1px); }
+
+    /* Anyone who has asked their OS to reduce motion gets none of the
+       above. This is a real accessibility setting -- motion can trigger
+       nausea and vestibular symptoms -- not a preference to override
+       because the animation is tasteful. */
+    @media (prefers-reduced-motion: reduce) {
+      .message.is-new { animation: none; }
+      .conversation-link, .row-menu-trigger, .suggestion-chip, .user-menu-trigger, #send-btn {
+        transition: none;
+      }
+      #send-btn:active:not(:disabled), .suggestion-chip:active { transform: none; }
+    }
 
     .warning {
       margin: 12px auto 0;
@@ -846,9 +899,12 @@
 
         <form id="chat-form" data-conversation-id="{{ active_conversation_id }}">
           <label for="message-input" class="sr-only">Message input</label>
-          <textarea id="message-input" placeholder="Message NYC Tenant Assistant" required></textarea>
+          <textarea id="message-input" placeholder="Message NYC Tenant Assistant" maxlength="{{ max_message_length }}" required></textarea>
           <button id="send-btn" type="submit" aria-label="Send message" title="{% if not ai_ready %}Configure GEMINI_API_KEY to enable chat{% else %}Send message{% endif %}" {% if not ai_ready %}disabled{% endif %}>&#8593;</button>
         </form>
+        <!-- aria-live="polite" so a screen reader announces the count as it
+             starts mattering, rather than on every keystroke. -->
+        <p class="char-count" id="char-count" aria-live="polite"></p>
       {% else %}
         <main class="empty-state">
           <!-- Rendered once with a plain, timezone-agnostic fallback so it's
@@ -1182,11 +1238,64 @@
         messageInput.style.height = "auto";
         messageInput.style.height = messageInput.scrollHeight + "px";
       }
-      messageInput.addEventListener("input", autoGrowMessageInput);
+
+      // Live character counter. The textarea's own maxlength stops typing
+      // past the cap, but silently -- a paste that's too long is truncated
+      // with no explanation at all -- so this makes the ceiling visible
+      // before someone runs into it. The number is read back off the
+      // textarea's own maxlength (rendered from routes.py's
+      // MAX_MESSAGE_LENGTH) rather than interpolated into JS a second
+      // time, so there's exactly one source for it and no way for a
+      // missing template variable to produce a syntax error here.
+      // maxLength is -1 when the attribute is absent, which just disables
+      // the counter rather than showing nonsense.
+      const MAX_MESSAGE_LENGTH = messageInput.maxLength;
+      const charCount = document.getElementById("char-count");
+      // Appear with 250 characters left, turn amber with 100 left. A
+      // fixed number of remaining characters rather than a percentage of
+      // the cap: "250 left" means the same thing to someone typing
+      // whatever the cap happens to be, whereas a percentage silently
+      // changes how much warning they get every time the cap moves.
+      const SHOW_COUNTER_WHEN_REMAINING = 250;
+      const WARN_COUNTER_WHEN_REMAINING = 100;
+      const SHOW_COUNTER_FROM = MAX_MESSAGE_LENGTH - SHOW_COUNTER_WHEN_REMAINING;
+      const WARN_COUNTER_FROM = MAX_MESSAGE_LENGTH - WARN_COUNTER_WHEN_REMAINING;
+
+      function updateCharCount() {
+        if (!charCount || MAX_MESSAGE_LENGTH <= 0) return;
+        const used = messageInput.value.length;
+        const remaining = MAX_MESSAGE_LENGTH - used;
+        // Counts down what's left rather than up from zero -- at the point
+        // this becomes visible, "180 characters left" is the number the
+        // person actually needs.
+        charCount.textContent =
+          remaining === 1 ? "1 character left" : remaining + " characters left";
+        charCount.classList.toggle("is-visible", used >= SHOW_COUNTER_FROM);
+        charCount.classList.toggle("near-limit", used >= WARN_COUNTER_FROM && used < MAX_MESSAGE_LENGTH);
+        charCount.classList.toggle("at-limit", used >= MAX_MESSAGE_LENGTH);
+      }
+
+      messageInput.addEventListener("input", () => {
+        autoGrowMessageInput();
+        updateCharCount();
+      });
+      updateCharCount();
+
+      // Honours the OS "reduce motion" setting: smooth scrolling is
+      // motion too, so this falls back to an instant jump rather than
+      // animating the scroll for someone who asked not to be animated at.
+      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+      function scrollChatToBottom() {
+        chatBox.scrollTo({
+          top: chatBox.scrollHeight,
+          behavior: prefersReducedMotion.matches ? "auto" : "smooth",
+        });
+      }
 
       function renderMessage(role, content) {
         const wrapper = document.createElement("div");
-        wrapper.className = `message ${role}`;
+        wrapper.className = `message ${role} is-new`;
 
         const label = document.createElement("span");
         label.className = "label";
@@ -1199,7 +1308,7 @@
         wrapper.appendChild(label);
         wrapper.appendChild(body);
         chatBox.appendChild(wrapper);
-        chatBox.scrollTop = chatBox.scrollHeight;
+        scrollChatToBottom();
         return wrapper;
       }
 
@@ -1208,7 +1317,7 @@
       // looks like the click didn't register.
       function renderThinking() {
         const wrapper = document.createElement("div");
-        wrapper.className = "message assistant";
+        wrapper.className = "message assistant is-new";
 
         const label = document.createElement("span");
         label.className = "label";
@@ -1230,7 +1339,7 @@
         wrapper.appendChild(label);
         wrapper.appendChild(body);
         chatBox.appendChild(wrapper);
-        chatBox.scrollTop = chatBox.scrollHeight;
+        scrollChatToBottom();
         return wrapper;
       }
 
@@ -1243,6 +1352,7 @@
         renderMessage("user", text);
         messageInput.value = "";
         autoGrowMessageInput();
+        updateCharCount();
         sendBtn.disabled = true;
         const thinkingEl = renderThinking();
 
@@ -1309,6 +1419,7 @@
         if (pendingPrompt) {
           messageInput.value = pendingPrompt;
           autoGrowMessageInput();
+          updateCharCount();
           chatForm.requestSubmit();
         }
       }
