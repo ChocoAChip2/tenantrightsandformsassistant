@@ -75,6 +75,17 @@
       --success-tint: #1f3327;
     }
     * { box-sizing: border-box; }
+    /* The delete-account confirmation form and its trigger button both
+       carry the native `hidden` attribute, and both are also targeted by
+       author rules that set `display` (`form.stack { display: grid }`,
+       `button { display: inline-flex }`). An author `display` rule always
+       beats the browser's built-in `[hidden] { display: none }` default
+       regardless of specificity, so without this line the "are you sure"
+       form would render permanently open next to the button that's
+       supposed to reveal it. This is the same cascade bug that shipped the
+       reset-password form visible on an invalid link -- see
+       log/2026-09-07-sidebar-menu-reorg-and-ux.txt. */
+    [hidden] { display: none !important; }
     body {
       margin: 0;
       min-height: 100vh;
@@ -205,6 +216,38 @@
     }
     .notice.error { background: var(--error-tint); color: var(--error); }
     .notice.success { background: var(--success-tint); color: var(--success); }
+
+    /* Deleting an account is the only irreversible control on this page, so
+       it gets a border in the error color and destructive buttons that read
+       as destructive -- rather than looking identical to "Save account
+       changes" one card above it. */
+    .danger-zone { border-color: var(--error); }
+    .danger-zone h2 { color: var(--error); }
+    button.danger { background: var(--error); }
+    button.danger:hover { background: var(--error); filter: brightness(0.92); }
+    /* A disabled destructive button should not also look hoverable. */
+    button.danger:disabled { background: var(--error); opacity: .5; }
+    button.danger:disabled:hover { filter: none; }
+    button.secondary-button {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    button.secondary-button:hover { background: var(--bg); color: var(--accent); }
+    .delete-confirm {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .delete-confirm .confirm-lead { margin: 0; }
+    .checkbox-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      line-height: 1.45;
+    }
+    .checkbox-row input { margin-top: 2px; accent-color: var(--error); }
+    .confirm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -244,7 +287,7 @@
     <section class="card">
       <h2>Account</h2>
       <p class="hint">Signed in as <strong>{{ user_email }}</strong>. Update your email and/or password below. Changing your email requires confirming it from your inbox before it takes effect.</p>
-      <form class="stack" method="POST" action="{{ url_for('main.update_account') }}">
+      <form class="stack" id="account-form" method="POST" action="{{ url_for('main.update_account') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>
           New email
@@ -272,6 +315,56 @@
       <h2>Your data</h2>
       <p class="hint">Download a copy of every message in every conversation you've had with the assistant, as a plain Markdown file, for your own records.</p>
       <a class="button secondary" href="{{ url_for('main.download_chat_history') }}">Download my chat history</a>
+    </section>
+
+    <!-- Deleting an account is the one irreversible thing on this page, so
+         it sits in its own visually distinct section at the very bottom,
+         away from the controls people use routinely. -->
+    <section class="card danger-zone">
+      <h2>Delete account</h2>
+      {% if pending_deletion %}
+        <div class="notice error">
+          <strong>Your account is scheduled for deletion.</strong>
+          <span data-purge-at="{{ pending_deletion.purge_after }}" id="purge-date">
+            It will be permanently deleted on {{ pending_deletion.purge_after[:10] }}.
+          </span>
+          Until then everything still works normally, and you can stop this at any time.
+        </div>
+        <form method="POST" action="{{ url_for('main.cancel_account_deletion') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit">Cancel deletion, keep my account</button>
+        </form>
+      {% else %}
+        <p class="hint">
+          This deletes your account and every conversation and message in it.
+          Nothing happens right away: your account is scheduled for deletion
+          in {{ deletion_grace_period_days }} days and keeps working the whole
+          time, so you can change your mind and cancel from this page. After
+          that it is permanent and cannot be undone.
+        </p>
+        <button type="button" class="danger" id="delete-account-start">Delete my account</button>
+
+        <!-- Step two. Hidden until the button above is clicked, and every
+             field in it is re-checked server-side (see the
+             request_account_deletion route) -- this is a confirmation, not
+             the enforcement. -->
+        <form class="stack delete-confirm" method="POST" action="{{ url_for('main.request_account_deletion') }}" id="delete-account-form" hidden>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <p class="hint confirm-lead">To confirm, type your email address (<strong>{{ user_email }}</strong>) below.</p>
+          <label>
+            Your email address
+            <input type="email" name="confirm_email" id="confirm-email" autocomplete="off" placeholder="{{ user_email }}" required>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="confirm_understood" value="yes" id="confirm-understood" required>
+            <span>I understand my conversations will be permanently deleted after {{ deletion_grace_period_days }} days.</span>
+          </label>
+          <div class="confirm-actions">
+            <button type="submit" class="danger" id="delete-account-confirm" disabled>Schedule my account for deletion</button>
+            <button type="button" class="secondary-button" id="delete-account-cancel">Never mind</button>
+          </div>
+        </form>
+      {% endif %}
     </section>
   </main>
 
@@ -318,12 +411,76 @@
     // Disable the submit button (and say what's happening) the instant the
     // account-changes form is submitted, rather than leaving it clickable
     // while the request is in flight.
-    document.querySelector("form.stack").addEventListener("submit", function (event) {
+    // Selected by id, not "form.stack" -- the delete-account confirmation
+    // below is also a .stack form, and this handler must not claim it.
+    document.getElementById("account-form").addEventListener("submit", function (event) {
       var btn = event.target.querySelector('button[type="submit"]');
       if (!btn || btn.disabled) return;
       btn.disabled = true;
       btn.textContent = "Saving…";
     });
+
+    // Account deletion, step two. Clicking "Delete my account" doesn't
+    // delete anything -- it reveals this form, and the real submit button
+    // stays disabled until the typed email matches the signed-in address
+    // AND the acknowledgement is ticked. The route re-checks both, so this
+    // is purely about making the second confirmation deliberate rather
+    // than about enforcement.
+    (function () {
+      var startBtn = document.getElementById("delete-account-start");
+      var form = document.getElementById("delete-account-form");
+      if (!startBtn || !form) return;  // not rendered when a deletion is already pending
+
+      var emailInput = document.getElementById("confirm-email");
+      var understoodBox = document.getElementById("confirm-understood");
+      var confirmBtn = document.getElementById("delete-account-confirm");
+      var cancelBtn = document.getElementById("delete-account-cancel");
+      var accountEmail = {{ user_email|tojson }};
+
+      function syncConfirmButton() {
+        var typed = emailInput.value.trim().toLowerCase();
+        var matches = typed === String(accountEmail).trim().toLowerCase();
+        confirmBtn.disabled = !(matches && understoodBox.checked);
+      }
+
+      startBtn.addEventListener("click", function () {
+        form.hidden = false;
+        startBtn.hidden = true;
+        emailInput.focus();
+      });
+
+      cancelBtn.addEventListener("click", function () {
+        form.hidden = true;
+        startBtn.hidden = false;
+        emailInput.value = "";
+        understoodBox.checked = false;
+        syncConfirmButton();
+        startBtn.focus();
+      });
+
+      emailInput.addEventListener("input", syncConfirmButton);
+      understoodBox.addEventListener("change", syncConfirmButton);
+
+      form.addEventListener("submit", function () {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "Scheduling…";
+      });
+
+      syncConfirmButton();
+    })();
+
+    // Show the purge deadline in the visitor's own locale/timezone rather
+    // than the raw UTC date the server rendered as a fallback.
+    (function () {
+      var el = document.getElementById("purge-date");
+      if (!el || !el.dataset.purgeAt) return;
+      var when = new Date(el.dataset.purgeAt);
+      if (isNaN(when.getTime())) return;
+      el.textContent =
+        "It will be permanently deleted on " +
+        when.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) +
+        ".";
+    })();
   </script>
 </body>
 </html>

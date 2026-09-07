@@ -216,5 +216,51 @@ class MessageBubbleOverflowTests(unittest.TestCase):
         self.assertIn(".bubble { min-width: 0; overflow-wrap: anywhere; }", body)
 
 
+class MessageLengthCapTests(unittest.TestCase):
+    def _chat_page(self):
+        service = FakeSupabaseService(
+            conversations=[{"id": "c1", "title": "Broken heat", "created_at": "", "updated_at": ""}]
+        )
+        app = _build_test_app(service)
+        client = app.test_client()
+        _logged_in_session(client)
+        return client.get("/chat?conversation_id=c1").get_data(as_text=True)
+
+    def test_textarea_maxlength_matches_the_server_side_cap(self):
+        """The relationship is what matters, not the specific number: the
+        composer's maxlength and the cap chat_message() enforces have to be
+        the same value, or the UI silently lets people type something the
+        server will then reject."""
+        from routes import MAX_MESSAGE_LENGTH
+
+        self.assertIn(f'maxlength="{MAX_MESSAGE_LENGTH}"', self._chat_page())
+
+    def test_the_cap_stays_in_a_sane_range(self):
+        """A guard against the cap drifting back up to something that makes
+        a single Gemini call expensive (it was 8000), or down to something
+        that cuts off a tenant mid-description."""
+        from routes import MAX_MESSAGE_LENGTH
+
+        self.assertGreaterEqual(MAX_MESSAGE_LENGTH, 1000)
+        self.assertLessEqual(MAX_MESSAGE_LENGTH, 4000)
+
+    def test_character_counter_is_rendered_and_starts_out_of_the_way(self):
+        body = self._chat_page()
+
+        self.assertIn('id="char-count"', body)
+        # Reserved space rather than display:none, so the counter appearing
+        # mid-sentence doesn't shove the composer up a line.
+        self.assertIn("visibility: hidden;", body)
+
+    def test_counter_appears_with_a_fixed_number_of_characters_left(self):
+        """Requested as "200-300 before the limit" -- a fixed remaining
+        count, not a percentage of the cap, so the warning distance stays
+        the same if the cap ever moves."""
+        body = self._chat_page()
+
+        self.assertIn("const SHOW_COUNTER_WHEN_REMAINING = 250;", body)
+        self.assertIn("characters left", body)
+
+
 if __name__ == "__main__":
     unittest.main()

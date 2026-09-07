@@ -69,12 +69,15 @@ from before this branch — errors only appear in logs.
 ├── ai_service.py         # Gemini client setup + response generation
 ├── alerting.py           # Webhook logging handler (ALERT_WEBHOOK_URL)
 ├── config.py             # Environment configuration loader
+├── login_lockout.py      # Failed-login lockout with exponential backoff
+├── rate_limit.py         # Shared Flask-Limiter instance (own module: avoids a circular import)
 ├── supabase_service.py   # Supabase client setup + auth service methods
 ├── routes.py             # Signup/login/chat/logout HTTP routes (uses services)
 ├── wsgi.py               # WSGI entrypoint for Render/Gunicorn (imports app)
 ├── test.py               # Backward-compatible legacy entrypoint (imports app)
 ├── requirements.txt      # Python dependencies
 ├── tests/                # Unit tests (python -m unittest discover -s tests)
+├── supabase/migrations/  # SQL applied to the Supabase project (account deletion + its pg_cron purge)
 ├── .github/workflows/
 │   └── keepalive.yml     # Supabase keep-alive cron (see below)
 └── templates/

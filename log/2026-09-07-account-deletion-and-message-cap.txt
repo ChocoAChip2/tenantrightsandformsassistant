@@ -1,0 +1,217 @@
+Deployment Summary — Account deletion with a 30-day grace period, a lower
+per-message cap with a live counter, less formulaic AI replies, and a small
+motion pass
+Date: 2026-09-07
+
+Requirements (from conversation, in order):
+1. "Have a character limit to 1000 or whatever is the industry standard
+   for AI."
+2. "Implement a delete account button and to confirm twice before
+   confirming and deleting the account in 30 days."
+3. "Have a character count when the character count getting close to
+   limit at least 200-300 before the limit when the counter pops up."
+4. "Also regarding the chat, it should be dynamic for responses instead of
+   close to the typical response."
+5. "Also see if you can implement javascript to make the site look more
+   natural and nice."
+
+Part 1 -- Per-message character cap, lowered and made visible (routes.py,
+templates/chat.html):
+
+MAX_MESSAGE_LENGTH went from 8000 to 4000. Not the 1000 first suggested,
+and the reasoning is worth stating rather than burying: 1000 characters is
+roughly 150 words, and this app's entire job is tenants describing a
+situation -- pasting two paragraphs out of an eviction notice or a lease
+clause runs past 1000 without anyone abusing anything. 4000 is in the range
+mainstream AI chat products settled on for a single turn (ChatGPT's free
+tier enforced ~4096 for years), still halves the worst-case Gemini call
+this app can be made to issue, and is a one-line change if a tighter cap
+turns out to be wanted.
+
+The cap was previously invisible: nothing in the UI mentioned it, and the
+only way to discover it was to send a long message and get a 400 back. Now
+the composer's textarea carries maxlength (rendered from the same
+MAX_MESSAGE_LENGTH constant, so the two cannot drift), and a counter
+underneath it appears with 250 characters left, turns amber at 100 left,
+and turns red at 0. Details worth noting:
+- The counter counts DOWN ("180 characters left"), not up -- at the point
+  it becomes visible, remaining is the number the person actually needs.
+- The threshold is a fixed remaining count, not a percentage of the cap
+  (the request was "at least 200-300 before the limit"). A percentage would
+  silently change how much warning someone gets every time the cap moves.
+- It uses `visibility: hidden` rather than `display: none`, so the line
+  always occupies its space -- otherwise the counter appearing mid-sentence
+  shoves the whole composer up by a line.
+- The JS reads the number back off the textarea's own maxLength attribute
+  instead of interpolating MAX_MESSAGE_LENGTH into the script a second
+  time. One source, and no way for a missing template variable to produce a
+  JavaScript syntax error in the page's main script block.
+The server-side check in chat_message() is unchanged and is still the one
+that actually holds; maxlength is trivially bypassed.
+
+Part 2 -- Account deletion with a 30-day grace period (new
+supabase/migrations/20260907_account_deletion_requests.sql,
+supabase_service.py, routes.py, templates/settings.html):
+
+Settings has a new Danger Zone at the bottom of the page, bordered and
+titled in the error color so it doesn't read like "Save account changes"
+one card up. The flow:
+- "Delete my account" reveals a confirmation form; it does not delete
+  anything.
+- That form requires TWO separate confirmations: typing the account's own
+  email address, and ticking an acknowledgement. The submit button stays
+  disabled until both are satisfied, and BOTH are re-checked server-side --
+  client-side confirmation is a UX nicety that a crafted POST skips
+  entirely, and "your account and every conversation in it are gone" is not
+  something to do on one unverified request.
+- Submitting writes a row to account_deletion_requests with
+  purge_after = now() + 30 days. Nothing is deleted, and the account keeps
+  working normally for the whole window -- which is what makes the cancel
+  button a real undo rather than a formality.
+- While a deletion is pending, the delete control is replaced by a banner
+  with the exact date (rendered server-side in UTC, then rewritten
+  client-side into the visitor's own locale and timezone) and a one-click
+  "Cancel deletion, keep my account". Cancelling has no confirmation gate
+  on purpose: the risky direction is scheduling a deletion, not stopping
+  one.
+
+WHY THE ACTUAL DELETION RUNS IN POSTGRES, NOT IN THIS APP:
+Deleting an auth.users row needs privileges the web app does not have -- it
+authenticates with the anon key plus the signed-in user's JWT and
+deliberately has no service-role key anywhere in its environment. Handing
+the web process a service-role key just to run a nightly cleanup would give
+every future bug in that process the ability to read or delete any user's
+data, which is a bad trade for a scheduled job. So the purge is a
+SECURITY DEFINER function, purge_expired_account_deletions(), on a pg_cron
+schedule (daily, 03:15 UTC). That also means it still fires when the Render
+service is asleep, and it doesn't depend on the GitHub Actions scheduler,
+which has quietly disabled itself on this repo before (see keepalive.yml).
+
+The function's where clause is the only thing between it and deleting the
+wrong account, so it is deliberately narrow and static: a user is touched
+only if they have a row in account_deletion_requests AND that row's
+purge_after is already in the past. No dynamic SQL, no parameters, nothing
+a caller can widen. conversations.user_id, messages.user_id and the request
+table's own user_id are all ON DELETE CASCADE against auth.users, so the
+single delete takes the account's conversations, messages and request row
+with it -- no manual ordering, and no way for one step to succeed while
+another silently fails.
+
+APPLIED TO THE LIVE DATABASE. This is the one part of this branch that is
+not just code: the table, its RLS policies, the function and the pg_cron
+schedule were applied to the Supabase project directly, because the feature
+does not work without them. Verified afterwards: the cron job is registered
+and active, and calling the purge function by hand returned 0 with all
+existing users still present (there were no pending requests to act on,
+which is exactly what it should do).
+
+This is also the first SQL checked into this repo. Every table before it
+was created by hand in the Supabase dashboard, so the schema lived in
+exactly one place and nowhere reviewable -- which matters more than usual
+for something that deletes accounts on a schedule.
+
+Part 3 -- Less formulaic AI replies (ai_service.py):
+
+"It should be dynamic for responses instead of close to the typical
+response." The system prompt described a pure "administrative intake
+clerk" whose only job was collecting Name, Address and Complaint, which
+made every reply the same shape regardless of what the tenant said: someone
+opening with "my landlord hasn't fixed the heat in three weeks, what are my
+rights?" got their question ignored and "What is your full name?" back --
+while the landing page promises "ask about repairs, evictions, deposits, or
+anything else about your tenancy."
+
+The prompt now tells the assistant to answer the question that was actually
+asked first, and to size and shape each reply to that question (a one-line
+question gets a couple of sentences; a complicated situation gets a short
+explanation and concrete steps) rather than running the same script and the
+same preamble every turn. It also asks for specifics -- naming HPD, 311,
+Housing Court, DHCR/HCR where relevant -- and adds two guardrails the old
+prompt didn't have: never invent a statute, rule number, dollar amount or
+deadline, and say plainly when something turns on legal judgment rather
+than attaching a boilerplate disclaimer to routine factual questions.
+
+The intake path is preserved exactly: when a tenant wants to file a
+complaint the assistant still collects the same three fields and still
+emits the identical raw JSON object that routes.py parses to fill the RA-81
+PDF. That contract is byte-for-byte unchanged -- it just is no longer the
+only thing the assistant is willing to do.
+
+Part 4 -- Motion pass (templates/chat.html):
+
+"See if you can implement javascript to make the site look more natural and
+nice", scoped deliberately to small, functional motion rather than
+decoration:
+- Messages fade and rise into place as they arrive. Only messages added
+  during the session animate (the class is applied in renderMessage(), never
+  rendered server-side) -- animating the whole history on every page load
+  would mean a long conversation fluttering into place each time it opens.
+- The chat scrolls smoothly to new messages instead of jumping; the initial
+  page-load scroll stays instant, since animating a long scroll on arrival
+  is noise, not polish.
+- Conversation rows, the "..." trigger, suggestion chips and the account
+  button transition their colors instead of snapping.
+- The send button scales down slightly while pressed, and chips shift a
+  pixel -- a click with no feedback until the network responds feels broken
+  on a slow connection.
+Every one of these is disabled under `prefers-reduced-motion: reduce`,
+including the smooth scrolling (which the JS checks explicitly, since a
+CSS media query can't reach scrollTo's behavior option). Reduced motion is
+an accessibility setting -- motion can trigger nausea and vestibular
+symptoms -- not a preference to override because the animation is tasteful.
+
+Also fixed while in settings.html: it had no `[hidden] { display: none
+!important; }` rule, and it sets `display` on both `form.stack` and
+`button` via author rules. An author `display` rule beats the browser's
+built-in `[hidden] { display: none }` regardless of specificity, so the
+delete-account confirmation form would have rendered permanently open next
+to the button meant to reveal it. This is the third appearance of this
+exact cascade bug in this codebase (it previously shipped the
+reset-password form visible on an invalid link, and the account popup
+permanently open) -- there is now a regression test for it on this page
+too.
+
+New tests (162 total in the suite, up from 140 -- 22 new test methods):
+- tests/test_account_deletion.py (18, new file): the request route rejects
+  a missing acknowledgement, a mismatched email, and a blank email, in each
+  case without calling the service at all; accepts both confirmations and
+  passes the 30-day grace period through; matches the email
+  case-insensitively and ignoring surrounding whitespace; reports a service
+  failure without a 500. The cancel route's three outcomes (logged out,
+  cancelled, nothing pending). The Danger Zone renders the delete control
+  when nothing is pending and the banner plus cancel button when something
+  is, the confirmation form ships with the `hidden` attribute, the
+  `[hidden]` override rule is present, and Settings still renders if the
+  pending-deletion lookup throws. Plus service-level tests for
+  request/cancel/get against a mocked postgrest client.
+  Deliberately NOT covered: the deletion itself, which runs inside Postgres
+  precisely so the web app never holds the privilege to do it -- there is
+  nothing in this codebase for a Python test to call.
+- tests/test_chat_page_ux_polish.py (4 new): the textarea's maxlength
+  equals the server's MAX_MESSAGE_LENGTH (the relationship, not the
+  number -- a mismatch means the UI lets people type something the server
+  will reject), the cap stays inside a sane range, the counter is rendered
+  with its space reserved, and it triggers on a fixed remaining count.
+
+Verified:
+- `python -m unittest discover -s tests` -- 162/162 pass.
+- `python -m py_compile` on every tracked .py file -- clean.
+- HTML tag-balance check on all six templates -- clean.
+- Against the live Supabase project: the pg_cron job is registered and
+  active, and purge_expired_account_deletions() returns 0 with all users
+  intact when nothing is pending.
+- Playwright, interactively: the counter stays hidden at 400 remaining,
+  appears exactly at 250, turns amber at 60, and red at 0, with maxlength
+  reading 4000; the delete confirmation form starts hidden, its submit
+  button stays disabled with nothing typed, with a wrong email, and after
+  un-ticking the box, and only enables with the correct email plus the
+  acknowledgement; submitting shows the scheduled flash, the pending banner
+  with a correctly localized date ("October 7, 2026"), and the cancel
+  button, with the delete control gone; cancelling restores the original
+  state.
+
+Still open from earlier requests in this session: soft-delete for an
+individual "Delete conversation" with its own grace period (this branch
+covers deleting the whole account, not one conversation), a per-user memory
+system so new chats don't re-ask known information, and an incognito/
+temporary chat mode with 30-day backend auto-deletion.

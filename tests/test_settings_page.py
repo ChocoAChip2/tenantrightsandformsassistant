@@ -27,6 +27,12 @@ class FakeSupabaseService:
     def fetch_all_conversations_with_messages(self, user_client):
         return self._conversations
 
+    def get_pending_account_deletion(self, user_client, user_id):
+        # The settings route asks about a pending account deletion in order
+        # to render the Danger Zone; none of the tests in this file are
+        # about that, so there never is one. See tests/test_account_deletion.py.
+        return None
+
     def update_account(self, access_token, refresh_token, email=None, password=None):
         self.update_account_calls.append(
             {"access_token": access_token, "refresh_token": refresh_token, "email": email, "password": password}
