@@ -36,6 +36,7 @@ import unittest
 import flask
 
 from routes import main_bp
+from tests.csrf_test_support import disable_csrf
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
@@ -69,6 +70,7 @@ def _build_test_app(service):
     app.config["SUPABASE_SERVICE"] = service
     app.config["AI_SERVICE"] = FakeAIService()
     app.register_blueprint(main_bp)
+    disable_csrf(app)
     return app
 
 
@@ -181,6 +183,37 @@ class AccountMenuLayoutInvariantTests(unittest.TestCase):
         user_menu_rule_start = body.index(".user-menu {")
         user_menu_rule = body[user_menu_rule_start:body.index("}", user_menu_rule_start)]
         self.assertNotIn("position: absolute", user_menu_rule)
+
+
+class HeaderHomeLinkTests(unittest.TestCase):
+    def test_brand_title_links_back_to_chat(self):
+        app = _build_test_app(FakeSupabaseService())
+        client = app.test_client()
+        _logged_in_session(client)
+
+        body = client.get("/chat").get_data(as_text=True)
+
+        self.assertIn('<h1><a href="/chat">NYC Tenant Assistant</a></h1>', body)
+
+
+class MessageBubbleOverflowTests(unittest.TestCase):
+    """A single long unbroken run of characters (a long URL, a pasted
+    token/hash) has no space to wrap at under `white-space: pre-wrap`
+    alone, so it used to render wider than the bubble and spill past its
+    edge. This locks in the fix (overflow-wrap: anywhere, plus min-width:
+    0 to actually let it take effect inside a flex column)."""
+
+    def test_bubble_has_overflow_wrap_and_flex_min_width_reset(self):
+        service = FakeSupabaseService(
+            conversations=[{"id": "c1", "title": "Broken heat", "created_at": "", "updated_at": ""}]
+        )
+        app = _build_test_app(service)
+        client = app.test_client()
+        _logged_in_session(client)
+
+        body = client.get("/chat?conversation_id=c1").get_data(as_text=True)
+
+        self.assertIn(".bubble { min-width: 0; overflow-wrap: anywhere; }", body)
 
 
 if __name__ == "__main__":

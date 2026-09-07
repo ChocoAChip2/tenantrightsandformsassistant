@@ -1,5 +1,7 @@
 supabase
 Flask
+Flask-Limiter
+Flask-WTF
 google-genai
 gunicorn
 pypdf

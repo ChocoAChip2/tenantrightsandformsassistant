@@ -1,0 +1,357 @@
+Deployment Summary — Abuse/overload failsafes, CSRF protection, login
+lockout, conversation renaming, a POST-only logout, plus chat UX polish
+Date: 2026-09-07
+
+Requirements (from conversation, in order):
+1. "Ensure that there are limits to request to limit over usage and
+   avoiding users interupting ussage via chats. Have fail safes so that
+   the chat cannot be overloaded and there is security features to avoid
+   attacks and etc. Up to your discretion. Also please implement editing
+   name of chat."
+2. "Also have the chat limited to a certain rate... ensure the chat
+   expands cleanly, not with arrows and expansion box. Ensure the send
+   button is implemented cleanly within the chat box... homepage chat
+   that greets like claude... custom greet according to Time and Date...
+   For editing the chats name, the button for [the "..."] including
+   deleting and archiving should include the renaming, or double clicking
+   the name can rename. Also have a limit if someone tries to log in with
+   different accounts with 10 tries block the log in for an hour and
+   increase that exponentially."
+3. "Also regarding the new password changes please change the emojis,
+   ensure it is a eye that is not an emoji and it should be relevant to
+   the color of the background, open eye for seeing password, eye with
+   cross for not."
+4. "And when chat prompts in the page are being offered like 'landlord
+   not fixing' 'security deposit' it should put the prompt in the chat
+   and hit send automatically."
+5. "Now make sure the site links on the top is a post and not a get" ->
+   confirmed with the user this meant the account-menu "Log out" link.
+6. "Something that is hidden from people navigating through specific
+   conversation IDs" -> investigated whether a visitor could see another
+   user's conversation by guessing/typing its id into the URL.
+7. "Before you finish do a sweep and see what features can be added for
+   functionality and usability... make the site cleaner, the buttons not
+   looking artificial but nicer and formal."
+8. (Smaller reports folded into the same pass) "Ensure text does not go
+   out of chat bubble"; "NYC tenant assistant name on top left should act
+   as a button to home page"; "Have the color settings relative to the
+   browser settings for first time users."
+
+Part 1 -- Abuse/overload failsafes and security hardening (app.py,
+rate_limit.py, routes.py):
+
+Before this branch, NONE of this existed: every POST route (including
+account-email/password changes and conversation delete) trusted the
+session cookie alone with no CSRF token, nothing capped how fast a client
+could hit the AI endpoint or the login form, a single message could be
+arbitrarily long, and a request body could be arbitrarily large. Added,
+all in create_app():
+
+- CSRF protection (Flask-WTF's CSRFProtect) on every state-changing
+  route. Every <form> in every template now carries a hidden csrf_token
+  field; the one exception (#chat-form in chat.html, which posts via
+  fetch()/JSON rather than a plain form) reads the token from a new
+  <meta name="csrf-token"> tag into an X-CSRFToken header instead, which
+  CSRFProtect checks the same way. WTF_CSRF_TIME_LIMIT is set to None
+  (token lives as long as the session does) rather than Flask-WTF's
+  default one-hour expiry, so leaving a page like "forgot password" open
+  for a while doesn't turn into a confusing rejected submission.
+- Rate limiting (Flask-Limiter, new rate_limit.py module) -- a blanket
+  default (60/minute, 200/hour) per signed-in user (falling back to IP
+  for anonymous requests) on every route, plus tighter limits on specific
+  routes: login and signup (10/min, brute-force/mass-account-creation
+  guard), forgot-password (5/min -- this route makes Supabase email an
+  arbitrary address, so with no limit it doubles as a tool for spamming
+  someone's inbox), reset-password and account updates (10/min),
+  create-conversation and rename-conversation (20/min), and the AI chat
+  endpoint (20/min *and* 300/day, since that's the one whose cost scales
+  with Gemini usage). rate_limit.py lives in its own module specifically
+  to avoid a circular import between app.py (needs it for init_app) and
+  routes.py (needs it to decorate individual views).
+- MAX_CONTENT_LENGTH capped at 2 MB app-wide -- this app has no file
+  uploads, so Flask now rejects (413) anything larger before it reaches
+  route code at all.
+- A per-message length cap (MAX_MESSAGE_LENGTH = 8000 chars) in
+  chat_message -- Gemini calls scale in cost and latency with input size,
+  so this bounds both, on top of the per-minute/per-day rate limit.
+- Session cookie hardening: SameSite=Lax unconditionally (defense in
+  depth alongside the CSRF token, no legitimate cross-site use exists for
+  this app's cookie), and Secure gated on Render's own RENDER=true
+  environment variable (set automatically on every Render service)
+  rather than always-on, since always-on would silently break the
+  session cookie during local development over plain http.
+- Standard response headers on every response: X-Content-Type-Options:
+  nosniff, X-Frame-Options: DENY, Referrer-Policy:
+  strict-origin-when-cross-origin, and a Content-Security-Policy that
+  blocks external scripts/frames/plugins. Also Strict-Transport-Security,
+  but only sent when request.is_secure is actually true (ProxyFix, from
+  an earlier branch, is what makes that report correctly in production)
+  -- never sent to a plain local http request.
+
+Known, deliberate limitations of this part (stated plainly rather than
+glossed over):
+
+- The rate limiter's storage is in-memory (Flask-Limiter's default),
+  which is fine for this app's current single-dyno deployment but does
+  NOT share counters across multiple gunicorn workers or dynos -- if this
+  is ever scaled up, each process enforces the limits independently, so
+  the effective ceiling for a determined client is roughly
+  (limit x worker count), not the number in the code. Moving to a shared
+  backend (Redis, which Flask-Limiter supports directly) would close that
+  gap; not done here since this app has no shared cache in its deployment
+  at all yet.
+- The Content-Security-Policy allows 'unsafe-inline' for both script-src
+  and style-src, since every template uses inline <script>/<style>
+  blocks rather than external files with nonces (a deliberate earlier
+  choice: no shared template inheritance). The policy still meaningfully
+  narrows what a successful injection could do (no external script/frame/
+  plugin loading), just not as far as a nonce-based rewrite of every
+  template would allow.
+
+Part 2 -- Login lockout, on top of the rate limit (new login_lockout.py,
+routes.py):
+
+The per-minute rate limit on /login (Part 1) resets every 60 seconds,
+which slows a scripted attack but not one running slowly enough to stay
+under it. login_lockout.py adds a second, much longer-memory guard, keyed
+the same way as rate limiting (the signed-in session's user_id, or the
+caller's IP pre-login): ten wrong passwords in a row locks that key out
+of /login for an hour; if it happens again after that lock expires, the
+wait doubles (2 hours, then 4, then 8...), capped at 24 hours so it
+can't grow into a de-facto permanent ban. A successful login clears the
+in-progress failure count so a mistyped password or two doesn't put
+someone halfway to a lockout forever, but deliberately does NOT reset the
+escalation counter -- the whole point of the exponential growth is that a
+repeat offender who eventually gets in and waits out a lock still faces a
+longer wait next time, not a clean slate. Same in-memory-storage caveat
+as Part 1's rate limiter (not shared across workers/dynos).
+
+Part 3 -- Server-side empty-conversation sweep (routes.py,
+supabase_service.py):
+
+A comment already sitting in chat.html's JS ("the server-side cleanup in
+create_conversation() ... is the backstop") turned out to be describing a
+method that didn't exist yet -- delete_empty_conversations() was designed
+in an earlier phase of this session but never actually implemented.
+Implemented it now, since it's exactly the "avoid interrupting usage"
+backstop this session's request is asking for: before creating a new
+conversation, the route now sweeps any of the user's existing
+conversations that have zero messages (created by a double-click, a
+second tab, or a client that ignores the disable-on-submit guard) and
+deletes them. Best-effort -- a failure here is logged but never blocks
+creating the new conversation.
+
+Part 4 -- Rename a conversation (supabase_service.py, routes.py,
+templates/chat.html):
+
+- New SupabaseService.rename_conversation() (mirrors
+  set_conversation_archived's shape: UPDATE ... WHERE id AND user_id,
+  raises ValueError if no row matched).
+- New POST /conversations/<id>/rename route: trims and caps the
+  submitted title at 120 chars, rejects an empty result with a flash, and
+  on a ValueError (conversation not found) redirects to the plain chat
+  list -- matching archive/delete's error handling.
+- UI, two entry points to the same flow: a "Rename" item at the top of
+  each row's "..." menu, and double-clicking the conversation's name
+  directly. Both swap that row's .conversation-link for an inline text
+  input (pre-filled with the current title, focused and selected), a real
+  <form method="POST"> like Archive/Delete/Restore -- Enter submits it,
+  Escape or clicking/tabbing away cancels without saving.
+  .conversation-link is a real <a href>, and a browser fires a click
+  event's own navigation before a dblclick event ever gets a chance to
+  preventDefault() it -- so every click on the link is now held for 220ms
+  before it actually navigates; a second click inside that window cancels
+  the pending navigation and starts the rename instead. That 220ms is the
+  deliberate, small cost of supporting double-click-to-rename on what's
+  otherwise a plain navigation link.
+
+Part 5 -- Suggestion chips ask the question, not just start a chat
+(templates/chat.html):
+
+The three homepage suggestion chips ("My landlord won't fix something",
+"I got an eviction notice", "Security deposit question") previously only
+created a new, empty, titled conversation -- clicking one still left the
+visitor to type out their actual question. Each chip now carries a
+data-prompt with a fuller first-person question; a click stashes that
+text in sessionStorage right before the chip's existing create-conversation
+form does its normal POST/redirect (there's no conversation to send a
+message into until the server responds with a real id, so this can't be
+done as a single fetch() call up front). Once the new page loads, if the
+chat box is empty and a stashed prompt is waiting, the script fills the
+message box and calls the same requestSubmit() a real Enter/click would
+-- so the chip both starts and asks the question in one click. The empty-
+chat-box check doubles as a safety net: it means this can only ever
+auto-fire into a conversation with no messages yet, never into one a
+visitor is mid-conversation with, even if a stale sessionStorage value
+somehow survived.
+
+Part 6 -- /logout is now POST-only (routes.py, templates/chat.html):
+
+Previously a plain GET route reachable from any page via e.g.
+<img src="/logout"> (browsers send GET for those with no user interaction
+at all) -- a low-severity but real CSRF gap, flagged as a known,
+deliberate limitation in an earlier pass and fixed now at the user's
+request. The account-menu "Log out" link is now a <form method="POST">
+with the same hidden csrf_token every other form carries; a
+`display: contents` rule keeps the form itself out of the menu's flex
+layout so the button inside it still lines up exactly like the Settings
+link beside it. GET /logout now returns 405.
+
+Part 7 -- Verified: a conversation_id in the URL can't leak another
+user's conversation:
+
+Investigated whether navigating to /chat?conversation_id=<not-mine> (a
+typo, or someone else's id) could expose that conversation's messages.
+It cannot, and this was already correct before this branch:
+ensure_conversation_for_user() is scoped to
+`.eq("id", conversation_id).eq("user_id", user_id)`, and both the page
+route and the chat-message route call it -- and treat a ValueError as
+"not found" -- before ever calling fetch_messages_for_conversation() or
+inserting a message. No code change was needed; new tests
+(ChatConversationAccessScopeTests, see below) pin this down explicitly at
+the route level, using a fake service that would hand back a giveaway
+"SHOULD-NEVER-LEAK" message if that ordering were ever broken.
+
+Part 8 -- Password show/hide icon (login.html, signup.html,
+settings.html, reset_password.html):
+
+The eye-emoji (\u{1F441}\u{FE0F}) / hide-emoji (\u{1F648}) toggle from an
+earlier phase rendered as a fixed-color picture no matter what CSS said,
+so it looked identical -- and not especially legible -- in both light and
+dark mode. Replaced with inline SVGs (an open eye / a crossed eye,
+stroke="currentColor") across all four templates (six fields total:
+login, signup, settings' two password fields, reset-password's two)
+swapped via .innerHTML instead of .textContent. The icon's color now
+comes from .password-toggle's own `color: var(--muted)`, the same themed
+token every other icon-ish thing on these pages uses, so it follows the
+page's actual light/dark background instead of ignoring it -- verified
+with Playwright under both an emulated light and dark color scheme.
+
+Part 9 -- Three smaller fixes:
+
+- "Ensure text does not go out of chat bubble": a single long unbroken
+  run of characters (a long URL, a pasted token/hash) had no space to
+  wrap under white-space: pre-wrap alone. Fixed with `.bubble {
+  overflow-wrap: anywhere; min-width: 0; }` -- the min-width: 0 is
+  required alongside it: .bubble sits inside a flex column (.message),
+  and a flex item's default min-width is "auto" (big enough to fit its
+  content unbroken), which silently defeats overflow-wrap on its own.
+- "NYC tenant assistant name on top left should act as a button to home
+  page": the header's <h1> is now a link to /chat, styled to still read
+  as a plain title (inherits color, no underline).
+- "Have the color settings relative to the browser settings for first
+  time users": already the existing behavior, verified rather than
+  assumed with Playwright under emulated OS light/dark modes.
+
+Part 10 -- Chat composer redesign (templates/chat.html):
+
+- The message textarea now auto-grows with its content
+  (`textarea.style.height` reset to "auto" then set to scrollHeight on
+  every input event) instead of exposing the browser's native
+  drag-to-resize corner handle (`resize: none` replaces it), capped at a
+  max-height past which it scrolls internally -- directly addressing
+  "ensure the chat expands cleanly, not with arrows and expansion box."
+- #chat-form is now a bordered, pill-shaped container
+  (border-radius: 22px) with the textarea's own border/background made
+  transparent so it reads as one input, not a box inside a box; the send
+  button is a small circular icon (an up-arrow) sitting inside that pill,
+  styled via an id selector (#send-btn) specific enough to override the
+  page's bare `button {}` sizing rule without `!important`.
+- Verified already correct, no change needed: a homepage greeting that
+  varies by time of day ("Good morning"/afternoon/evening, "Working
+  late") plus the visitor's name and today's date -- this already existed
+  in chat.html from an earlier phase and satisfies "homepage chat that
+  greets like claude... custom greet according to Time and Date."
+
+Part 11 -- Usability/formality sweep (login.html, signup.html,
+forgot_password.html, reset_password.html, settings.html):
+
+Requested as an open-ended "what else would help" pass; scoped
+deliberately narrow rather than attempting a broader redesign, since the
+rest of this branch already touches nearly every template. Added to
+every primary form's submit button across these five pages: a
+background-color/opacity transition (buttons changed color instantly
+before, which read as slightly mechanical), a `:disabled` style
+(dimmed, not-allowed cursor), and a small script that disables the
+button and swaps its label to a present-progressive state ("Logging
+in...", "Creating account...", "Sending...", "Resetting...", "Saving...")
+the instant the form is submitted -- preventing a slow connection from
+inviting a second click that would re-submit a login, create a second
+account attempt, send a second reset email, or double-save account
+changes, and giving visible confirmation that the click registered.
+Considered but deliberately not done in this pass, to keep it scoped:
+inline field-level validation before submit, skeleton/loading states for
+the conversation list itself, and an empty-state illustration for the
+Archived section when it has nothing in it -- none of these were asked
+for, and each is a bigger, separable piece of work.
+
+New tests (140 total in the suite, up from 119 before this batch -- 21
+new test methods, plus CSRF wiring added to eight existing test files):
+- tests/test_security_hardening.py (16, up from 11): CSRF rejects a POST with no
+  token or a forged one, accepts one with a real token; the four
+  hardening headers are present on every response; HSTS is sent only
+  over a request ProxyFix reports as secure; a 3 MB body is rejected
+  (413); login 429s on the 11th attempt within a minute;
+  rate_limit_key() prefers session user_id over IP and falls back to IP
+  when anonymous; an over-the-cap chat message is rejected (400) before
+  the fake AI service is ever called, one at exactly the cap is
+  accepted; a caller already locked out by login_lockout is refused with
+  the expected flash and never reaches Supabase, and a successful login
+  clears that lockout's failure streak; /logout rejects GET (405),
+  accepts a POST with a valid csrf_token and clears the session, and
+  rejects a POST with no token (400).
+- tests/test_login_lockout.py (14, new file): unit tests directly against
+  login_lockout.py -- not locked before the threshold, locked once it's
+  reached, independent keys tracked separately, further failures while
+  already locked don't extend the lock, a second lockout after the first
+  expires lasts roughly twice as long, duration is capped, a success
+  clears an in-progress streak and an active lock but leaves the
+  escalation counter alone, and format_duration()'s wording at a few
+  boundary values. Exercises the module directly rather than through
+  HTTP, since driving the lockout threshold (10) through real requests
+  would hit the login route's own 10-per-minute rate limit at the same
+  count and never actually reach the lockout logic.
+- tests/test_conversation_create_rename_and_cleanup.py (16, up from 14): the
+  create-conversation route sweeps empty conversations first (and still
+  creates the new one if the sweep itself fails); the rename route's
+  happy path, blank-title rejection, length truncation, and not-found
+  handling; delete_empty_conversations' three cases and
+  rename_conversation's two against a mocked postgrest client; and
+  ChatConversationAccessScopeTests (2), pinning down that a
+  conversation_id belonging to a different user shows no messages (GET
+  /chat) and is rejected outright (404 on POST /chat/message), using a
+  fake service that would otherwise hand back a "SHOULD-NEVER-LEAK"
+  sentinel if the ownership check were ever skipped or reordered.
+- tests/csrf_test_support.py (new, shared helper, not a test file
+  itself): every template now calls {{ csrf_token() }}, which only
+  exists once Flask-WTF's CSRFProtect has been initialized against the
+  app -- disable_csrf(app) registers CSRFProtect (for the template
+  global) while turning enforcement back off, since most of these tests
+  aren't about CSRF itself. Wired into all 8 existing test files with a
+  _build_test_app helper.
+- tests/test_chat_page_ux_polish.py: two new test classes
+  (HeaderHomeLinkTests, MessageBubbleOverflowTests) locking in the
+  header-link and bubble-overflow-wrap fixes.
+- tests/test_password_reset.py, tests/test_proxy_fix.py: updated for the
+  same csrf_token()/CSRFProtect/rate-limiter reasons as above.
+
+Verified:
+- `python -m unittest discover -s tests` -- 140/140 pass.
+- `python -m py_compile` on every tracked .py file -- clean.
+- An HTML tag-balance check against every modified template -- clean.
+- Playwright, interactively: a suggestion chip auto-fills and sends its
+  prompt into a brand-new conversation, producing both the user bubble
+  and an assistant reply with no further clicks; double-clicking a
+  conversation's name opens a focused, pre-filled, text-selected rename
+  input (Escape cancels back to the plain link); the password-toggle icon
+  is a real SVG (not text/emoji) whose computed color matches the page's
+  --muted token under both an emulated light and dark color scheme, and
+  matches --text on hover; the account-menu "Log out" control is a real
+  <form method="POST"> carrying a csrf_token field, not a plain <a href>.
+
+Deliberately not done (still open from earlier requests in this session,
+unrelated to what was asked for in this specific batch): soft-delete for
+"Delete conversation" with a 30-day grace period, a per-user memory
+system so new chats don't re-ask known information, an incognito/
+temporary chat mode with 30-day backend auto-deletion, and account
+deletion from Settings with email confirmation and a 30-day grace period.

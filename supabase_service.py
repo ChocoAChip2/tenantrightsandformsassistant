@@ -110,6 +110,53 @@ class SupabaseService:
         )
         return response.data[0]["id"]
 
+    def delete_empty_conversations(self, user_client: Client, user_id: str) -> None:
+        """Delete any of this user's conversations that were created but
+        never actually used (zero messages).
+
+        Called right before creating a new conversation (see routes.py's
+        create_conversation) as the server-side backstop for the sidebar's
+        disable-on-submit spam guard: that JS closes the common
+        double-click race, but doesn't stop two separate tabs (or a
+        scripted client) from each creating an empty conversation, so
+        without this a user who does that ends up with a pile of "New
+        conversation" rows they never sent a single message in. This only
+        ever touches conversations with zero messages -- anything with
+        even one message, however old or apparently abandoned, is left
+        alone.
+
+        There's no single postgrest call for "delete rows with no
+        matching child row", so this is three round trips: the user's
+        conversation ids, which of those ids appear in messages, and a
+        delete of the ones that don't. Fine at the scale one tenant's
+        conversation list runs at (same tradeoff already made by
+        fetch_all_conversations_with_messages above); not something to
+        reach for at a larger scale without a proper SQL view.
+        """
+
+        conversations = (
+            user_client.table("conversations").select("id").eq("user_id", user_id).execute()
+        ).data or []
+        if not conversations:
+            return
+
+        conversation_ids = [row["id"] for row in conversations]
+
+        messages = (
+            user_client
+            .table("messages")
+            .select("conversation_id")
+            .in_("conversation_id", conversation_ids)
+            .execute()
+        ).data or []
+        ids_with_messages = {row["conversation_id"] for row in messages}
+
+        empty_ids = [cid for cid in conversation_ids if cid not in ids_with_messages]
+        if not empty_ids:
+            return
+
+        user_client.table("conversations").delete().in_("id", empty_ids).execute()
+
     def ensure_conversation_for_user(self, user_client: Client, conversation_id: str, user_id: str) -> None:
         """Ensure the target conversation exists and belongs to the authenticated user."""
 
@@ -259,6 +306,28 @@ class SupabaseService:
             user_client
             .table("conversations")
             .update({"archived_at": archived_at})
+            .eq("id", conversation_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not response.data:
+            raise ValueError("Conversation not found for this user.")
+
+    def rename_conversation(
+        self, user_client: Client, conversation_id: str, user_id: str, title: str
+    ) -> None:
+        """Set a conversation's display title.
+
+        routes.py does the trimming/length/emptiness validation before this
+        is ever called (same division of labor as create_conversation's
+        title default) -- this just writes whatever title it's given,
+        scoped to the owning user the same way archive/delete are.
+        """
+
+        response = (
+            user_client
+            .table("conversations")
+            .update({"title": title})
             .eq("id", conversation_id)
             .eq("user_id", user_id)
             .execute()
