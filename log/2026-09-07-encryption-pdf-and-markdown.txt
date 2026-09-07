@@ -1,0 +1,211 @@
+Deployment Summary — Encryption at rest with a rotatable scheme, three real
+bugs fixed (chat auto-scroll, RA-81 form filling, Markdown replies)
+Date: 2026-09-07
+
+Requirements (from conversation):
+1. "Can you do a full recheck ensure everything works."
+2. "Ensure security of data being only accessible to the user via
+   encryption and ensure that the method used to encrypt can also be
+   worked on in the future to allow to make changes meaning better
+   encryption and changing in the background as features are added."
+3. "Ensure the chat goes down as the bot responds."
+4. "Ensure that the AI chat bot ... is able to pass through and take
+   information from our site, just so users can pass PDFs or have AI fill
+   out PDFs and all other functionalities, ensure they work." /
+   "as this site is made for LLMs to help complete forms ... ensure the
+   LLMs are able to do so."
+5. "The AI LLM is using ** like '**HPD website**' for bolding, ensure that
+   passes through."
+
+Part 0 -- The recheck, and what it found:
+
+Ran as a genuine audit rather than a rubber stamp, which is the only
+reason the rest of this branch exists. Against the live database: every
+foreign key into auth.users was confirmed ON DELETE CASCADE (previously
+asserted from inference, not a query), and the account-deletion purge was
+exercised for real inside a rolled-back transaction -- an expired request
+deleted the user, its conversation, its message and its request row, while
+a request with 29 days left survived untouched and the three real accounts
+were never affected. Also verified: RLS on, 4 policies, cron job active,
+and anon/authenticated cannot execute the purge function.
+
+App side: every route audited for auth gating and CSRF (all correct),
+security headers present, 62/62 browser checks green including dark mode
+and a 390px mobile viewport.
+
+Part 1 -- Encryption at rest, designed to be replaced (new crypto_service.py):
+
+Message bodies and conversation titles are now encrypted by the app before
+they reach Supabase, with AES-256-GCM.
+
+STATED PLAINLY, because it would be easy to oversell: this protects the
+data from anyone who reaches the *stored* copy without reaching the app --
+a leaked database dump, a compromised Supabase project, an RLS policy
+misconfigured later, anyone with SQL console access. It does NOT protect
+against a compromised app server, because the key lives in that process.
+True end-to-end encryption, where only the user's password unlocks their
+data, is incompatible with this product: Gemini has to read the
+conversation server-side to answer it and the RA-81 is filled from the
+same text, so encrypting past the server means the assistant cannot read
+it either, and a forgotten password would destroy every conversation
+permanently. The accurate phrase is "encrypted at rest under a key the
+application holds", and docs/data-encryption.md says so in those words.
+
+The half that was actually asked for -- being able to change it later --
+is the design. Every value carries its own envelope:
+
+    enc:v<algorithm version>:<key id>:<base64 payload>
+
+- Algorithm version selects a class from a registry. Adding a stronger
+  scheme later means registering it as version 2 and moving a pointer;
+  version 1 rows keep decrypting forever.
+- Key id selects from the configured key set, so rotating means adding a
+  key and pointing the active id at it. Nothing is re-encrypted at once.
+- needs_rewrap() reports whether a value is behind the current scheme, and
+  supabase_service upgrades stale rows as it reads them -- so a rotation
+  or an algorithm change MIGRATES ITSELF over normal use. No batch job, no
+  downtime, no single risky pass over the table.
+
+Two deliberate limits on that background upgrade: it is capped at 25
+message bodies per read (a long conversation opened for the first time
+would otherwise fire one UPDATE per message inside a page render), and it
+is best-effort -- a failed rewrite is logged and dropped, because a
+cleanup task must never break the page it runs inside.
+
+Deploy safety: with no key configured, every function is a pass-through
+and behavior is identical to today. Existing plaintext rows keep working
+after a key is added, and encrypt themselves as they are read. So this can
+ship before the key exists and be switched on later with no migration.
+
+Part 2 -- The chat did not follow replies, and the cause was not what it
+looked like (templates/chat.html):
+
+The scroll code called chatBox.scrollTo(). #chat-box has no `overflow` --
+it is the flex column holding the messages. The element that actually
+scrolls is `main`. So every scroll call in this file was a silent no-op:
+the chat never followed a reply, and never opened at the bottom either.
+Fixed by resolving the nearest scrollable ancestor at runtime
+(findScrollContainer) rather than hardcoding a tag, so it cannot rot if
+the layout changes again.
+
+A second, smaller cause on top: the scroll ran in the same frame the
+message was appended, when scrollHeight is still the previous value, so
+even against the right element a long reply stopped short. Both the
+per-message scroll and the initial page-load jump now run through
+requestAnimationFrame twice, and the initial jump also re-runs on
+window.load, since assistant turns are HTML whose final height is not
+known when the script first runs.
+
+Measured after the fix: 0px from the bottom on load and after a long
+reply, with the last reply fully inside the viewport.
+
+Part 3 -- The RA-81 PDF was producing blank forms (form_service.py):
+
+Asked to "ensure the PDF functionality works", it did not. Three separate
+faults, each enough on its own:
+
+1. The writer was built with append_pages_from_reader(), which copies
+   pages and their widget annotations but NOT the /AcroForm dictionary
+   those widgets belong to. update_page_form_field_values() therefore had
+   no field tree to write into and silently wrote nothing. Every PDF this
+   feature ever produced was blank. Fixed with PdfWriter(clone_from=...).
+2. The field names were wrong. The code wrote to "Text1", "Text2",
+   "Text3"; "Text1" is not a field on this form at all, and the other two
+   are arbitrary boxes. The RA-81's names are Acrobat-generated and
+   actively misleading -- the tenant's street address is "Text2", the
+   apartment number "Text3", and there are two fields called "Name" and
+   "Name_2" for the tenant and the owner. The correct mapping was derived
+   by extracting every widget's rectangle from the PDF and matching it
+   against the rendered page, then confirmed by reading the filled values
+   back and checking their coordinates. The tenant column sits at x~=76-131
+   and the owner column at x~=351-391, which is what makes "Name" vs
+   "Name_2" decidable rather than a coin flip. This mattered: putting a
+   tenant's name in the landlord's box on a form filed with a state agency
+   is worse than leaving it blank.
+   One field is worth calling out: the complaint's continuation line is
+   named "Part III  Tenants Affirmation" (Acrobat named it after the
+   following heading). "undefined_15", the obvious-looking candidate,
+   belongs to "Hall Inside Apartment" one line above.
+3. Only page 1 was filled. The complaint lines are on page 2, so the
+   complaint text was discarded even once the names were right.
+
+Also fixed while in there: output went to a single fixed path
+(/tmp/completed_complaint.pdf) shared by every request in the process, so
+two tenants finishing intake at the same time could race and one would
+download the other's complaint -- now a unique temp file per call.
+NeedAppearances is set, without which many viewers show the boxes empty
+even though the values are in the file. The template path is resolved
+against the module rather than the working directory. The address is split
+across the form's separate street / apartment / city-state-zip boxes, with
+anything unparseable left whole on the street line rather than guessed
+into the wrong box. A complaint too long for the two ruled lines now ends
+with "(continued in attached statement)" instead of being silently cut.
+
+Part 4 -- Markdown replies (new markdown_service.py):
+
+Gemini writes Markdown whether asked to or not, and tenants were seeing
+"**HPD**" with the asterisks. render_markdown() converts the subset the
+assistant actually emits -- bold, italic, inline code, links, bullet and
+numbered lists, headings, paragraphs -- server-side, in one place, for
+both render paths: chat() attaches content_html to stored assistant turns
+and chat_message() returns reply_html alongside reply. Only assistant
+turns are rendered; a tenant who types "**" means "**".
+
+Its output is injected with |safe, so it is the one place in this app
+where a mistake is XSS. The design is escape-first: every input is
+HTML-escaped before a single formatting rule runs, so no foreign tag can
+ever exist in the output and there is no allow-list to get wrong. Link
+hrefs get extra care since they are attacker-controlled text inside a tag
+we do emit -- only http/https become links, and the URL patterns exclude
+quote characters.
+
+That last point is not theoretical. The first version used
+html.escape(quote=False), and a URL containing a double quote closed the
+href attribute early, letting the rest of the payload become live
+attributes -- a working XSS, caught by probing the module with hostile
+input before wiring it in rather than after. The module docstring and a
+test both record it so it does not come back.
+
+New tests (234 total, up from 203 at the start of this branch and 167
+before the recheck):
+- tests/test_crypto_service.py (19): round-trip, unique nonces, plaintext
+  passthrough, no double-wrapping; a retired key still decrypting after
+  rotation and new writes using the new key; dropping an in-use key
+  failing loudly rather than returning garbage; registering a version 2
+  and confirming version 1 rows still read; unknown future versions
+  rejected; tampered ciphertext rejected; malformed keys ignored rather
+  than crashing the app; describe() not leaking key material.
+- tests/test_encrypted_storage.py (17): ciphertext is what reaches
+  Supabase and plaintext is what routes.py gets back, for both message
+  bodies and titles; the caller's dict is not mutated (routes.py reuses it
+  for the response); rows written before encryption still read; the
+  background re-wrap upgrades plaintext and retired-key rows, does nothing
+  when already current, is capped per read, and never breaks the page when
+  it fails.
+- tests/test_form_service.py (14): every field the code writes to actually
+  exists on the RA-81; values are really written (the /AcroForm
+  regression); tenant details land in the tenant boxes and nothing lands
+  in the owner column; the complaint reaches the page-2 lines; long
+  complaints say they continue rather than truncating silently; each call
+  gets its own file; NeedAppearances is set; address splitting including
+  the unparseable case.
+- tests/test_markdown_service.py (17): the formatting subset, plus script
+  tags, img/onerror payloads, javascript: URLs, raw anchors and the
+  quote-in-URL break-out all rendering inert.
+
+Verified:
+- python -m unittest discover -s tests -- 234/234.
+- Live database: cascade rules queried; purge exercised in a rolled-back
+  transaction in both directions (expired deleted, not-yet-due survived);
+  production counts unchanged and no test rows left behind.
+- Every route audited for logged-out gating and CSRF; GET /logout 405.
+- Playwright: 62/62 on the full feature pass (unchanged), plus 12/12 on a
+  new pass covering the scroll fix with content that genuinely overflows
+  and Markdown in both the stored-history and live-reply paths. Zero
+  console errors throughout.
+- The no-comments-in-served-HTML rule still holds after all of this.
+
+Not done in this branch, and still open: storing generated files (the
+chat-history Markdown, completed PDFs) in Supabase with a top-right panel
+for browsing them later. That is a new feature with a schema, a storage
+bucket and UI of its own, not a fix, and it is the next thing to build.

@@ -47,6 +47,28 @@ server check in `chat_message()` is the one that actually enforces it.
 
 ---
 
+## Assistant replies are Markdown
+
+Gemini writes Markdown whether or not it is asked to — `**HPD**`, numbered
+steps, links. Those used to be shown to tenants literally, asterisks and
+all, because every bubble was rendered with `textContent`.
+
+`markdown_service.render_markdown()` (Python) converts a small subset —
+bold, italic, inline code, links, bullet and numbered lists, headings,
+paragraphs — and the result is injected with `|safe` into a
+`.bubble.rich`. Rendering happens **server-side, in one place**, for both
+paths: `chat()` attaches `content_html` to each stored assistant turn, and
+`chat_message()` returns `reply_html` alongside `reply` so the live fetch
+path never has to parse Markdown in the browser.
+
+Only assistant turns are rendered. A tenant who types `**` means `**`, and
+running their own text through a markup renderer would widen the injection
+surface for no benefit.
+
+The safety of that `|safe` rests entirely on `render_markdown` escaping its
+input *before* any formatting rule runs — see the module docstring, which
+records the XSS this got wrong once already.
+
 ## Renaming a conversation
 
 Two entry points, one flow: the **Rename** item in a row's `…` menu, and
@@ -160,6 +182,29 @@ Deliberately small and always tied to something the person just did:
   flutter into place.
 - New messages scroll into view smoothly; the initial page-load scroll stays
   an instant jump.
+
+  **The element that scrolls is `main`, not `#chat-box`.** `#chat-box` is
+  the flex column holding the messages and has no `overflow` of its own, so
+  calling `scrollTo` on it silently does nothing — which is exactly what
+  the code did for a long time, meaning the chat never followed a reply and
+  never opened at the bottom. `findScrollContainer()` walks up from
+  `#chat-box` to the nearest ancestor with `overflow-y: auto | scroll`
+  rather than hardcoding `main`, so this cannot rot if the layout changes
+  again.
+
+  `scrollChatToBottom()` schedules the scroll inside `requestAnimationFrame`
+  rather than calling `scrollTo` in the same frame the message was appended.
+  At append time the browser has not laid the new node out yet, so
+  `chatBox.scrollHeight` is still the *previous* height — scrolling to it
+  stops short, which is why a long assistant reply used to leave its last
+  lines below the fold. A second pass on the following frame catches text
+  that reflows after first layout (wrapping, a late font swap). Both passes
+  are needed: the first handles the common case, the second the long ones.
+  The initial page-load jump does the same double-pass and also re-runs on
+  `window.load`, because assistant turns are rendered as HTML (lists,
+  headings) whose final height is not known when the script first runs —
+  without it, opening a conversation landed a dozen pixels short of the
+  bottom.
 - Rows, chips, the `…` trigger and the account button transition their
   colors; the send button scales down while pressed, chips shift a pixel. A
   click with no feedback until the network answers feels broken.

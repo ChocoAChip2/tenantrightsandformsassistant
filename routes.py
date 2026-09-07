@@ -9,6 +9,7 @@ import logging
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for, send_file
 
 from ai_service import AIService
+from markdown_service import render_markdown
 from login_lockout import format_duration, record_failure, record_success, seconds_until_unlocked
 from rate_limit import limiter, rate_limit_key
 from supabase_service import SupabaseService
@@ -282,6 +283,12 @@ def chat():
         try:
             supabase_service.ensure_conversation_for_user(user_client, conversation_id, session["user_id"])
             messages = supabase_service.fetch_messages_for_conversation(user_client, conversation_id)
+            # Only the assistant's turns are Markdown. A tenant who types
+            # "**" means "**", and rendering their own text as markup
+            # would also widen the injection surface for no benefit.
+            for message in messages:
+                if message.get("role") == "assistant":
+                    message["content_html"] = render_markdown(message.get("content"))
         except ValueError:
             flash("That conversation could not be found.", "error")
             conversation_id = None
@@ -531,7 +538,7 @@ def chat_message():
             # If it is not JSON, it is a normal chat response. Send it to the frontend.
             pass
 
-        return jsonify({"reply": reply})
+        return jsonify({"reply": reply, "reply_html": render_markdown(reply)})
 
     except ValueError:
         return jsonify({"error": "No valid messages were provided."}), 400
