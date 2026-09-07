@@ -296,6 +296,10 @@
     .greeting-title { margin: 0 0 10px; font-size: 26px; font-weight: 600; color: var(--text); }
     .greeting-sub { margin: 0 0 22px; color: var(--muted); font-size: 14px; line-height: 1.5; }
     .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    /* Stronger at-rest border/shadow than the old near-invisible
+       var(--border) outline, and a real background fill on hover (not just
+       a subtle text-color shift) so it's obvious these are clickable and
+       obvious when one is being hovered. */
     .suggestion-chip {
       border: 1px solid var(--border);
       background: var(--surface);
@@ -303,10 +307,18 @@
       border-radius: 6px;
       padding: 8px 14px;
       font-size: 13px;
+      font-weight: 600;
       cursor: pointer;
       font-family: inherit;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+      transition: background-color .15s ease, border-color .15s ease, color .15s ease;
     }
-    .suggestion-chip:hover { border-color: var(--accent); color: var(--accent-hover); }
+    .suggestion-chip:hover, .suggestion-chip:focus-visible {
+      background: var(--accent-tint);
+      border-color: var(--accent);
+      color: var(--accent-hover);
+      outline: none;
+    }
 
     /* Bottom-left account control: identity + a popup with Settings/Log
        out (and room for more later), instead of header links. */
