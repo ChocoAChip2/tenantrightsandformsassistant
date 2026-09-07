@@ -1,0 +1,152 @@
+Deployment Summary — Chat sidebar cleanup: "..." menu, spam-prevention,
+Enter/Shift+Enter, and the Settings/Log-out popup no longer covering chats
+Date: 2026-09-07
+
+Requirements (from conversation):
+1. "note the settings and log out are blocking the bottom portion of the
+   new conversations, fix that" -- and later, more specifically: "If you
+   have too many chats settings and logout button hide the archive chats,
+   ensure log out and settings do not block anything."
+2. "Delete and archive button should be put into three dots near the chat,
+   on the right side, just to have it organized."
+3. "when making a new chat/new conversation ensure that multiple aren't
+   made in a spam."
+4. "Archived chats should be in the archive folder."
+5. "Implemented Shift+Enter to go down, and Enter to send message in
+   chat."
+
+Root causes and fixes, in the order the underlying bugs were found:
+
+1. The Settings/Log-out popup (#user-menu) rendered permanently open.
+   Root cause: `.user-menu { display: flex }` is an author-origin CSS
+   rule, and an author rule that sets `display` on an element always
+   overrides the browser's own built-in `[hidden] { display: none }`
+   default -- regardless of how specific the selector is. So the popup's
+   `hidden` attribute was never actually doing anything; it sat open over
+   the bottom of the sidebar on every single page load. This was verified
+   with Playwright (rendered the template with 20 fake conversations,
+   confirmed `#user-menu` was visible on load, then confirmed it correctly
+   reports hidden after the fix) before being shipped, rather than
+   guessed at from the bug report alone. Fixed with one rule:
+   `[hidden] { display: none !important; }` in chat.html's global CSS.
+   The identical bug existed in templates/reset_password.html
+   (`#reset-form` vs. a bare `form { display: grid }` rule), found
+   proactively by grepping every other template for the native `hidden`
+   attribute -- also fixed there, and also now covered by a test
+   (test_password_reset.py::test_hidden_attribute_override_rule_present).
+
+2. Once #1 was fixed, re-testing surfaced the second, more literal half of
+   the "blocking" report: even *correctly* opening the account popup could
+   still cover the last conversation rows (including an open Archived
+   folder), because #user-menu was `position: absolute; bottom: calc(100%
+   + 6px)` -- a floating overlay drawn on top of whatever the scrollable
+   conversation list happened to have at that screen position, regardless
+   of scroll offset. Reproduced with Playwright: rendered chat.html with
+   25 conversations + 10 archived, scrolled the list to the bottom,
+   opened the account menu, and confirmed the last archived row's own
+   click point resolved to the popup, not the row.
+
+   Fix: `.sidebar-footer` is now `display: flex; flex-direction:
+   column-reverse` instead of `position: relative`, and `#user-menu` lost
+   its `position: absolute` entirely -- it's now a normal in-flow sibling
+   of the trigger button, rendered above it because the row order is
+   reversed. Opening the popup therefore genuinely grows the footer's
+   height, and because `.sidebar-scroll` is the `flex: 1` sibling sharing
+   the same fixed-height column, the scrollable area shrinks to make room
+   instead of the popup floating on top of it. Re-verified with
+   Playwright after the fix: with the list scrolled to the very bottom (or
+   scrolled to an arbitrary middle position) and the menu open, the
+   scroller's own box no longer overlaps the menu's box at all, and the
+   last archived row -- once scrolled fully into the now-shorter visible
+   area -- is topmost and clickable. This is a structural guarantee (the
+   popup literally cannot occupy the same screen space as the scrollable
+   list any more), not a padding/scroll-position hack, so it holds
+   regardless of how many conversations or archived chats exist.
+
+3. Per-conversation Archive/Delete (Restore/Delete when archived) actions
+   moved from always-visible buttons into a single "..." icon
+   (`.row-menu-trigger`, shown on row hover/focus, aria-haspopup="menu")
+   that opens a small dropdown (`.row-menu-panel`, role="menu") with the
+   actual action buttons (role="menuitem"). One delegated click handler
+   (event delegation on `[data-row-menu-trigger]`) supports any number of
+   rows, closes other open menus when one opens, and closes on outside
+   click or Escape. Unchanged on mobile except the trigger itself is
+   hidden below 700px (`.row-menu-trigger { display: none !important; }`,
+   replacing the old `.conversation-actions` rule) -- archive/delete
+   remain reachable there via the Archived section... except see the
+   "deliberately not done" note below, since that section is hidden on
+   mobile already for space reasons predating this change.
+
+4. Spam prevention for "+ New chat" and the greeting page's suggestion
+   chips: each of those forms now carries `data-new-chat-form`, and a
+   small script disables that form's submit button the moment it's
+   submitted -- closes the window for a double-click (or an impatient
+   retry while the request is in flight) to create more than one empty
+   conversation client-side. This is the client-side half only; a
+   server-side backstop (sweeping a user's existing empty conversations
+   before creating a new one) is still open, see below.
+
+5. `<summary>` for the Archived section now leads with a folder emoji
+   (`&#128193;`) -- "Archived chats should be in the archive folder,"
+   taken literally as a visual/organizational cue rather than a
+   structural change (the conversations were already grouped under that
+   `<details>` section; this was about making that unmistakable at a
+   glance).
+
+6. The message textarea now sends on Enter and inserts a newline on
+   Shift+Enter (`keydown` listener checking `event.shiftKey`, calling
+   `chatForm.requestSubmit()` when not held and the send button isn't
+   disabled) -- previously Enter did nothing since it's a <textarea>, so
+   sending required clicking Send every time.
+
+New tests (8, all passing alongside the existing 84):
+- tests/test_chat_page_ux_polish.py (7): row-menu markup for active and
+  archived rows (trigger + panel + correct archive/delete/unarchive
+  action URLs, role=menuitem, old .icon-btn/.conversation-actions gone),
+  the archived-folder emoji + count, the spam-prevention data attribute +
+  disable script, the Enter/Shift+Enter keydown handler, the `[hidden]`
+  override rule, and -- as a structural regression guard for fix #2 above
+  -- that `.sidebar-footer` uses `flex-direction: column-reverse` and
+  `.user-menu` no longer sets `position: absolute`.
+- tests/test_password_reset.py: one new test locking in the `[hidden]`
+  override rule on reset_password.html.
+
+Verified:
+- `python -m unittest discover -s tests` -- 92/92 pass (84 existing + 8
+  new), including the full existing test_conversation_archive_delete.py
+  suite unmodified (its assertions are route/service-level, not
+  markup-level, so the row-menu restructuring didn't touch them).
+- `python -m py_compile` on every tracked .py file -- clean.
+- An HTML tag-balance check (html.parser-based, walks the whole document
+  tracking an open-tag stack) against the modified chat.html -- no
+  mismatched or unclosed tags after the markup restructuring.
+- Playwright, interactively, for everything CSS/JS-behavioral that a
+  string-matching test suite can't observe: the `[hidden]` fix actually
+  taking effect on load; the account-menu popup no longer overlapping the
+  scrollable list's own bounding box, or a specific archived row's click
+  point, whether the list is scrolled to the very bottom or to an
+  arbitrary middle position; the popup's own links remaining fully
+  clickable after the layout change.
+
+Deliberately not done (still open, and largest first):
+- Server-side spam-prevention backstop: the client-side disable-on-submit
+  above closes the common double-click race, but doesn't stop, say, two
+  separate tabs from each creating an empty conversation. A
+  delete_empty_conversations()-style sweep in supabase_service.py, called
+  from routes.py's create_conversation() before inserting the new row,
+  would close that gap; not built yet.
+- Soft-delete for "Delete conversation" (requested separately: "deleted
+  chats should be held for 30 days before removing"), a per-user memory
+  system so new chats don't re-ask known information, an incognito/
+  temporary chat mode with 30-day backend auto-deletion, and account
+  deletion from Settings with email confirmation and a 30-day grace
+  period -- all four are substantial features (new tables, RLS policies,
+  a pg_cron-based purge job, new routes and UI) requested in the same
+  conversation and intentionally scoped out of this batch so each can get
+  its own migration, tests, and review rather than being rushed in
+  alongside a UI cleanup pass.
+- Did not touch the mobile (<700px) layout beyond renaming the hidden
+  selector from `.conversation-actions` to `.row-menu-trigger` -- the
+  Archived section is still hidden below 700px, which predates this
+  branch and is a separate, pre-existing space-constraint tradeoff, not
+  something this batch changed.
