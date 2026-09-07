@@ -9,6 +9,8 @@ import logging
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for, send_file
 
 from ai_service import AIService
+from login_lockout import format_duration, record_failure, record_success, seconds_until_unlocked
+from rate_limit import limiter, rate_limit_key
 from supabase_service import SupabaseService
 from form_service import FormService
 
@@ -16,6 +18,18 @@ from form_service import FormService
 # one unit.
 main_bp = Blueprint("main", __name__)
 logger = logging.getLogger(__name__)
+
+# A message this long is well past anything a real tenant question needs and
+# starts to look like someone testing how much they can push through a
+# single request -- Gemini calls bill (and take longer) roughly in
+# proportion to input size, so this caps both the cost and the latency risk
+# of one oversized message, on top of the per-minute rate limit below.
+MAX_MESSAGE_LENGTH = 8000
+
+# Matches the sidebar's rename <input maxlength="120"> -- the client-side
+# cap is just a nicer typing experience; this is the one that actually
+# holds, since the client-side value is trivial to bypass.
+MAX_CONVERSATION_TITLE_LENGTH = 120
 
 
 def get_supabase_service() -> SupabaseService:
@@ -47,6 +61,7 @@ def get_user_scoped_client():
 
 
 @main_bp.route("/", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 def signup():
     """Show the signup page and create a new account on form submission."""
     if request.method == "POST":
@@ -81,10 +96,27 @@ def signup():
 
 
 @main_bp.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 def login():
-    """Show the login page and create a browser session after authentication."""
+    """Show the login page and create a browser session after authentication.
+
+    Failed attempts are also tracked per-caller (see login_lockout.py): ten
+    wrong passwords in a row locks that caller out of this route for an
+    hour, doubling on each further lockout, on top of the per-minute rate
+    limit above -- the rate limit alone resets every minute, which slows a
+    scripted attack but doesn't stop one from just running slowly.
+    """
     if request.method == "POST":
         supabase_service = get_supabase_service()
+        lockout_key = rate_limit_key()
+        wait_seconds = seconds_until_unlocked(lockout_key)
+        if wait_seconds > 0:
+            flash(
+                f"Too many failed login attempts. Try again in {format_duration(wait_seconds)}.",
+                "error",
+            )
+            return render_template("login.html")
+
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
 
@@ -98,9 +130,11 @@ def login():
             session["user_id"] = auth_response.user.id
             session["access_token"] = auth_response.session.access_token
             session["refresh_token"] = auth_response.session.refresh_token
+            record_success(lockout_key)
 
             return redirect(url_for("main.chat"))
         except Exception as exc:
+            record_failure(lockout_key)
             flash(
                 f"Login failed. Confirm your email first if needed. Details: {exc}",
                 "error",
@@ -110,8 +144,16 @@ def login():
 
 
 @main_bp.route("/forgot-password", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 def forgot_password():
-    """Collect an email and ask Supabase to send it a password-reset link."""
+    """Collect an email and ask Supabase to send it a password-reset link.
+
+    The tight rate limit here isn't just abuse-of-this-app protection: this
+    route makes Supabase send an email to whatever address is submitted, so
+    with no limit at all it doubles as a free tool for spamming an
+    arbitrary inbox with reset-password emails, or for brute-forcing
+    Supabase's own outbound email quota.
+    """
 
     if request.method == "POST":
         email = request.form.get("email", "").strip()
@@ -144,6 +186,7 @@ def forgot_password():
 
 
 @main_bp.route("/reset-password", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 def reset_password():
     """Set a new password from the recovery link Supabase emailed the user.
 
@@ -233,6 +276,7 @@ def chat():
 
 
 @main_bp.route("/conversations", methods=["POST"])
+@limiter.limit("20 per minute")
 def create_conversation():
     """Create a new named conversation and jump straight into it."""
     if not session.get("user_id"):
@@ -245,9 +289,19 @@ def create_conversation():
         return redirect(url_for("main.login"))
 
     title = request.form.get("title", "").strip() or "New conversation"
+    supabase_service = get_supabase_service()
+
+    # Best-effort cleanup, not a precondition for creating the new one --
+    # see delete_empty_conversations' docstring. A failure here shouldn't
+    # stop the user from starting a new conversation just because the
+    # sweep itself hit a problem.
+    try:
+        supabase_service.delete_empty_conversations(user_client, session["user_id"])
+    except Exception:
+        logger.exception("Failed to sweep empty conversations before creating a new one.")
 
     try:
-        conversation_id = get_supabase_service().create_conversation(user_client, session["user_id"], title)
+        conversation_id = supabase_service.create_conversation(user_client, session["user_id"], title)
         return redirect(url_for("main.chat", conversation_id=conversation_id))
     except Exception:
         logger.exception("Failed to create conversation.")
@@ -309,6 +363,47 @@ def unarchive_conversation(conversation_id):
     return redirect(url_for("main.chat"))
 
 
+@main_bp.route("/conversations/<conversation_id>/rename", methods=["POST"])
+@limiter.limit("20 per minute")
+def rename_conversation(conversation_id):
+    """Rename a conversation. The title shown in the sidebar is otherwise
+    whatever the first message set it to (or "New conversation")."""
+
+    if not session.get("user_id"):
+        return redirect(url_for("main.login"))
+
+    user_client = get_user_scoped_client()
+    if not user_client:
+        session.clear()
+        flash("Your session expired. Please log in again.", "error")
+        return redirect(url_for("main.login"))
+
+    title = request.form.get("title", "").strip()[:MAX_CONVERSATION_TITLE_LENGTH]
+
+    if not title:
+        # The conversation being renamed is presumably still right there in
+        # the sidebar, so send the visitor back into it to retry rather
+        # than dropping them out to the plain chat list.
+        flash("Conversation name cannot be empty.", "error")
+        return redirect(url_for("main.chat", conversation_id=conversation_id))
+
+    try:
+        get_supabase_service().rename_conversation(user_client, conversation_id, session["user_id"], title)
+        return redirect(url_for("main.chat", conversation_id=conversation_id))
+    except ValueError:
+        # Unlike the blank-title case above, the conversation itself is
+        # what's missing here -- redirecting back into conversation_id
+        # would just make /chat's own lookup immediately repeat this same
+        # flash. Land on the plain chat list instead, matching
+        # archive/unarchive/delete's error handling.
+        flash("That conversation could not be found.", "error")
+    except Exception:
+        logger.exception("Failed to rename conversation.")
+        flash("Could not rename that conversation. Please try again.", "error")
+
+    return redirect(url_for("main.chat"))
+
+
 @main_bp.route("/conversations/<conversation_id>/delete", methods=["POST"])
 def delete_conversation(conversation_id):
     """Permanently delete a conversation and its messages. Cannot be undone."""
@@ -338,6 +433,7 @@ def delete_conversation(conversation_id):
 
 
 @main_bp.route("/chat/message", methods=["POST"])
+@limiter.limit("20 per minute; 300 per day")
 def chat_message():
     """Persist a user message, generate an AI reply from the stored history, and persist that too."""
     if not session.get("user_id"):
@@ -354,6 +450,11 @@ def chat_message():
 
     if not conversation_id or not content:
         return jsonify({"error": "A conversation and message are required."}), 400
+
+    if len(content) > MAX_MESSAGE_LENGTH:
+        return jsonify(
+            {"error": f"Message is too long (max {MAX_MESSAGE_LENGTH} characters)."}
+        ), 400
 
     supabase_service = get_supabase_service()
     user_id = session["user_id"]
@@ -429,6 +530,7 @@ def settings():
 
 
 @main_bp.route("/settings/account", methods=["POST"])
+@limiter.limit("10 per minute")
 def update_account():
     """Update the signed-in user's email and/or password via Supabase auth."""
 
@@ -519,8 +621,17 @@ def _render_conversations_as_markdown(conversations: list[dict]) -> str:
     return "\n".join(lines)
 
 
-@main_bp.route("/logout")
+@main_bp.route("/logout", methods=["POST"])
 def logout():
-    """Clear the browser session and return the user to the login page."""
+    """Clear the browser session and return the user to the login page.
+
+    POST-only (and so CSRF-protected, like every other state-changing
+    route) rather than a plain GET link -- a GET version could be forced
+    on a signed-in visitor by any page that embeds e.g. <img
+    src="/logout">, since browsers send GET requests for those without
+    asking. Logging someone out uninvited doesn't expose or change any
+    data, but there's no reason to leave a request forgery hole open once
+    the fix is just a <form> instead of an <a>.
+    """
     session.clear()
     return redirect(url_for("main.login"))

@@ -11,6 +11,7 @@ import unittest
 import flask
 
 from routes import main_bp
+from tests.csrf_test_support import disable_csrf
 
 # routes.py's render_template() calls resolve against the app's template
 # folder, which Flask defaults to a "templates" directory next to wherever
@@ -42,6 +43,7 @@ def _build_test_app(sign_up_result):
     app.config["SUPABASE_SERVICE"] = FakeSupabaseService(sign_up_result=sign_up_result)
     app.config["AI_SERVICE"] = FakeAIService()
     app.register_blueprint(main_bp)
+    disable_csrf(app)
     return app
 
 

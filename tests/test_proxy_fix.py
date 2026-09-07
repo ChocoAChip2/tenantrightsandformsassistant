@@ -20,6 +20,13 @@ env var *before* importing app, or the bare `import app` line itself raises.
 No other test file imports app.py for exactly this reason; they build a
 throwaway Flask app around main_bp instead. This file needs the real
 create_app() specifically to test the ProxyFix wiring it does.
+
+Since create_app() now also wires up real CSRF protection and the shared
+rate_limit.limiter (see test_security_hardening.py for those), the POST
+tests below explicitly disable CSRF (WTF_CSRF_ENABLED = False) -- neither
+is what this file is testing -- and setUp() resets the limiter's counters,
+which live on a module-level singleton shared across every create_app()
+call in this process rather than being scoped per-app.
 """
 
 import os
@@ -31,6 +38,7 @@ import unittest
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from app import create_app
+from rate_limit import limiter
 
 
 class FakeSupabaseService:
@@ -42,6 +50,18 @@ class FakeSupabaseService:
 
 
 class ProxyFixWiringTests(unittest.TestCase):
+    def setUp(self):
+        # create_app() wires up the real CSRFProtect and the shared
+        # rate_limit.limiter, since this file exercises the actual WSGI
+        # stack rather than a bare Flask app around main_bp -- neither is
+        # what this file is testing, so both are neutralized here: CSRF is
+        # off entirely, and the limiter's shared in-memory counters (which
+        # persist across every create_app() call in this process, since
+        # they live on the module-level Limiter singleton, not per-app)
+        # are reset so an earlier test's requests never cause a later one
+        # to unexpectedly 429.
+        limiter.reset()
+
     def test_wsgi_app_is_wrapped_in_proxyfix(self):
         app = create_app()
         self.assertIsInstance(app.wsgi_app, ProxyFix)
@@ -54,6 +74,7 @@ class ProxyFixWiringTests(unittest.TestCase):
         instead of the real public https:// URL Supabase's allowlist
         expects an exact match against."""
         app = create_app()
+        app.config["WTF_CSRF_ENABLED"] = False
         service = FakeSupabaseService()
         app.config["SUPABASE_SERVICE"] = service
         client = app.test_client()
@@ -80,6 +101,7 @@ class ProxyFixWiringTests(unittest.TestCase):
         with no forwarding headers should still resolve normally instead of
         the middleware inventing an https URL out of nowhere."""
         app = create_app()
+        app.config["WTF_CSRF_ENABLED"] = False
         service = FakeSupabaseService()
         app.config["SUPABASE_SERVICE"] = service
         client = app.test_client()
